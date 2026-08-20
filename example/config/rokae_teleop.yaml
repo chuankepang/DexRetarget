@@ -1,0 +1,40 @@
+# ROKAE Cartesian teleoperation configuration.
+# All translations use metres, rotations use radians, quaternions use XYZW.
+
+robot:
+  type: xmate-er-pro-7        # xmate-6 | xmate-er-pro-7 | standard-6
+  ip: 192.168.0.160
+  local_ip: 192.168.0.100     # Jetson wired interface used by realtime traffic
+  control_hz: 1000
+  rt_network_tolerance: 20
+
+  # Pose of the robot base in the shared world: T_world_base.
+  # Change only this transform for upright, inverted, or tilted mounting.
+  base_transform:
+    pose_xyzw: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+teleoperation:
+  translation_scale: 0.5
+  rotation_scale: 0.7
+
+  # Proper rotation C mapping Quest-reference axes to robot-reference axes.
+  # quest3.py already exposes x-forward, y-left, z-up.
+  quest_to_robot_rotation:
+    [1.0, 0.0, 0.0,
+     0.0, 1.0, 0.0,
+     0.0, 0.0, 1.0]
+
+safety:
+  max_translation_speed: 0.20  # m/s
+  max_angular_speed: 0.80      # rad/s
+  max_translation_delta: 0.005 # m per Quest update
+  max_rotation_delta: 0.02     # rad per Quest update
+  low_pass_alpha: 0.25         # (0, 1], smaller is smoother
+  command_timeout: 0.20        # seconds; hold and re-reference after timeout
+
+  # Axis-aligned TCP workspace in the ROKAE base frame.
+  workspace_min: [-1.2, -1.2, -0.1]
+  workspace_max: [1.2, 1.2, 1.5]
+
+mock:
+  initial_pose_xyzw: [0.45, 0.0, 0.35, 0.0, 0.0, 0.0, 1.0]
