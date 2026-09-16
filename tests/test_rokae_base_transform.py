@@ -23,8 +23,12 @@ class BaseTransformTest(unittest.TestCase):
         mapper.set_reference(T_vr_ref, T_base_tcp_ref)
         result = mapper.update(T_vr_current)
 
-        expected_world = (
-            T_world_base @ T_base_tcp_ref @ (invert_transform(T_vr_ref) @ T_vr_current)
+        expected_world = T_world_base @ T_base_tcp_ref
+        expected_world[:3, 3] += T_vr_current[:3, 3] - T_vr_ref[:3, 3]
+        expected_world[:3, :3] = (
+            T_vr_current[:3, :3]
+            @ T_vr_ref[:3, :3].T
+            @ expected_world[:3, :3]
         )
         expected_base = invert_transform(T_world_base) @ expected_world
         np.testing.assert_allclose(result.world_target, expected_world, atol=1e-10)

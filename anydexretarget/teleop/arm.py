@@ -100,15 +100,21 @@ class RelativePoseMapper:
             raise RuntimeError("RelativePoseMapper reference has not been initialized")
         current = validate_transform(T_vr_current, "T_vr_current")
 
-        # Required body-relative convention: inv(T_vr_ref) @ T_vr_current.
+        # Keep the diagnostic relative transform, but map motion spatially in
+        # the Quest tracking world.  This prevents the initial wrist/TCP
+        # orientation from rotating a straight hand translation into an
+        # unexpected robot path.
         vr_relative = invert_transform(self._T_vr_ref) @ current
         mapped_relative = np.eye(4, dtype=np.float64)
         mapped_relative[:3, 3] = (
-            self.translation_scale * self.quest_to_robot_rotation @ vr_relative[:3, 3]
+            self.translation_scale
+            * self.quest_to_robot_rotation
+            @ (current[:3, 3] - self._T_vr_ref[:3, 3])
         )
+        spatial_rotation = current[:3, :3] @ self._T_vr_ref[:3, :3].T
         mapped_rotation = (
             self.quest_to_robot_rotation
-            @ vr_relative[:3, :3]
+            @ spatial_rotation
             @ self.quest_to_robot_rotation.T
         )
         mapped_rotvec = matrix_to_rotation_vector(mapped_rotation)
@@ -116,7 +122,11 @@ class RelativePoseMapper:
             self.rotation_scale * mapped_rotvec
         )
 
-        world_target = self._T_world_tcp_ref @ mapped_relative
+        world_target = self._T_world_tcp_ref.copy()
+        world_target[:3, 3] += mapped_relative[:3, 3]
+        world_target[:3, :3] = (
+            mapped_relative[:3, :3] @ self._T_world_tcp_ref[:3, :3]
+        )
         base_target = self.T_base_world @ world_target
         result = PoseMappingResult(
             vr_relative=vr_relative,
@@ -259,12 +269,14 @@ class ArmTeleopController:
         limiter: PoseSafetyLimiter,
         command_timeout: float = 0.20,
         enabled: bool = True,
+        apply_safety: bool = True,
     ) -> None:
         if not np.isfinite(command_timeout) or command_timeout <= 0.0:
             raise ValueError("command_timeout must be positive")
         self.mapper = mapper
         self.limiter = limiter
         self.command_timeout = float(command_timeout)
+        self.apply_safety = bool(apply_safety)
         self._enabled = bool(enabled)
         self._status = "waiting_reference"
         self._last_input_time: Optional[float] = None
@@ -336,14 +348,22 @@ class ArmTeleopController:
             self._needs_recenter = True
             self._status = "waiting_recenter" if requested else "hold_disabled"
 
-    def recenter(self, T_vr_current: Optional[np.ndarray] = None) -> bool:
+    def recenter(
+        self,
+        T_vr_current: Optional[np.ndarray] = None,
+        T_base_tcp_hold: Optional[np.ndarray] = None,
+    ) -> bool:
         with self._lock:
             if self._last_command is None:
                 return False
             vr_pose = self._last_vr_pose if T_vr_current is None else T_vr_current
             if vr_pose is None:
                 return False
-            hold = self._last_command.base_target_safe
+            hold = (
+                self._last_command.base_target_safe
+                if T_base_tcp_hold is None
+                else validate_transform(T_base_tcp_hold, "recenter TCP hold")
+            )
             self.mapper.recenter(vr_pose, hold)
             timestamp = self._last_input_time
             assert timestamp is not None
@@ -370,7 +390,11 @@ class ArmTeleopController:
                 return self.last_command  # type: ignore[return-value]
 
             mapping = self.mapper.update(vr_pose)
-            safe_target = self.limiter.apply(mapping.base_target, timestamp)
+            safe_target = (
+                self.limiter.apply(mapping.base_target, timestamp)
+                if self.apply_safety
+                else mapping.base_target.copy()
+            )
             self._status = "active"
             self._last_command = ArmCommand(
                 timestamp=float(timestamp),

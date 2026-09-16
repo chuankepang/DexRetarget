@@ -49,6 +49,20 @@ class RelativePoseMappingTest(unittest.TestCase):
                 atol=1e-12,
             )
 
+    def test_translation_is_spatial_not_rotated_by_initial_wrist(self) -> None:
+        wrist_rotation = rotation_vector_to_matrix([0.0, 0.0, np.pi / 2.0])
+        vr_ref = make_transform([1.0, 2.0, 3.0], wrist_rotation)
+        mapper = self.mapper()
+        mapper.set_reference(vr_ref, self.robot_ref)
+        current = vr_ref.copy()
+        current[0, 3] += 0.10
+        result = mapper.update(current)
+        np.testing.assert_allclose(
+            result.base_target[:3, 3] - self.robot_ref[:3, 3],
+            [0.10, 0.0, 0.0],
+            atol=1e-12,
+        )
+
     def test_c_xyz_rotations_use_so3_not_euler_subtraction(self) -> None:
         mapper = self.mapper(rotation_scale=0.5)
         for axis in np.eye(3):
@@ -70,7 +84,10 @@ class RelativePoseMappingTest(unittest.TestCase):
         mapper = self.mapper()
         mapper.set_reference(vr_ref, self.robot_ref)
         result = mapper.update(vr_current)
-        np.testing.assert_allclose(result.base_target[:3, :3], local_delta, atol=1e-10)
+        spatial_delta = reference_rotation @ local_delta @ reference_rotation.T
+        np.testing.assert_allclose(
+            result.base_target[:3, :3], spatial_delta, atol=1e-10
+        )
 
 
 if __name__ == "__main__":

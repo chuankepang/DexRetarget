@@ -11,6 +11,7 @@ dist/
 build/
 *.egg
 *.whl
+rokae/python/_rokae_cpp*.so
 
 # Logs
 logs/

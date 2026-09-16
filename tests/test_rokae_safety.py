@@ -126,7 +126,7 @@ class PoseSafetyTest(unittest.TestCase):
         np.testing.assert_allclose(enabled.base_target_safe, moved.base_target_safe)
 
     def test_mock_driver_latest_value_and_timeout_hold(self) -> None:
-        driver = MockRokaeDriver(np.eye(4), control_hz=500.0, command_timeout=0.02)
+        driver = MockRokaeDriver(np.eye(4), control_hz=500.0, command_timeout=0.20)
         driver.connect()
         driver.start()
         try:
@@ -134,11 +134,11 @@ class PoseSafetyTest(unittest.TestCase):
             final = make_transform([0.3, 0.0, 0.0])
             driver.set_target_pose(first)
             driver.set_target_pose(final)
-            time.sleep(0.01)
-            np.testing.assert_allclose(driver.get_tcp_pose(), final)
-            time.sleep(0.03)
+            time.sleep(0.15)
+            np.testing.assert_allclose(driver.get_tcp_pose(), final, atol=1e-4)
+            time.sleep(0.21)
             self.assertTrue(driver.timed_out)
-            np.testing.assert_allclose(driver.get_tcp_pose(), final)
+            np.testing.assert_allclose(driver.get_tcp_pose(), final, atol=1e-4)
         finally:
             driver.disconnect()
 

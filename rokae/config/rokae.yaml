@@ -1,0 +1,104 @@
+# ROKAE xMate ER Pro 7 / xCore 2.3.2 / xCoreSDK-CPP 0.3.4
+# Units: metres, radians, seconds. NRT speed is the SDK integer speed setting.
+
+robot:
+  type: xmate-er-pro-7
+  ip: 192.168.0.160
+  local_ip: 192.168.0.100
+  control_hz: 1000            # C++ callback period is fixed at 1 ms
+  sdk_callback_hz: 1000
+  rt_network_tolerance: 20
+  controller_rate_limit: true
+  # Official range/recommendation: 10-100 Hz. 30 Hz is the next low-lag
+  # candidate; do not raise it again until the 2 mm realtime test is quiet.
+  controller_filter_cutoff_hz: 30.0
+
+  # Right-arm teleoperation init for the current upright base/world alignment.
+  # With the hand/TCP mounting, TCP +Z points forward (+world X) and TCP -Y points down
+  # (-world Z): arm forward, palm down. J2/J4/J6 stay away from zero as the
+  # xCore manual requires for ER Pro. Verified with the controller FK model:
+  # sigma_min(J)=0.189, condition number=10.10 (mixed linear/angular units).
+  initial_joint_move:
+    enabled: true
+    # joint_position: [0.0, -0.60, 0.0, 1.40, 0.0, 0.75, 1.5707963268]
+    joint_position: [+0.00003116, +0.45183324, -0.00000048, +1.10359162, -0.00008988, +0.97925259, +1.59737224]
+    # Used only when the final target is farther than max_joint_delta. This
+    # routes the J7 palm flip through zero; max_segment_delta then subdivides
+    # both coarse legs into small controller-planned moves.
+    joint_waypoints:
+      # First move J2/J4/J6 away from singular/limit areas while preserving J7.
+      - [0.0, -0.60, 0.0, 1.40, 0.0, 0.75, -1.5707963268]
+      # Only after the arm shape is safe, begin the palm flip.
+      - [0.0, -0.60, 0.0, 1.40, 0.0, 0.75, 0.0]
+    # Init-only NRT settings. SDK speed=100 enters the ~30% joint-speed tier,
+    # so use 50 (<100, ~10%) and an additional 0.20 online scale.
+    joint_speed: 0.05
+    online_speed_scale: 0.20
+    max_segment_delta: 0.30
+    timeout: 60.0
+    max_joint_delta: 1.60
+    min_joint_limit_margin: 0.174533  # 10 deg, based on ER3 Pro manual limits
+    min_shoulder_bend: 0.35          # abs(J2), official ER Pro singular guard
+    min_elbow_bend: 0.35             # abs(J4), official ER Pro singular guard
+    min_wrist_bend: 0.35             # abs(J6), official ER Pro singular guard
+
+  # Current upright installation: base and world axes are identical.
+  # XYZ remains a calibration placeholder; replace it if the origins differ.
+  base_transform:
+    pose_xyzw: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  require_controller_base_rotation_identity: true
+  controller_base_rotation_tolerance: 0.02  # rad
+
+non_realtime:
+  # xCoreSDK 0.3.4 joint-speed tiers: <100≈10%, 100..200≈30%,
+  # 200..500≈50%, 500..800≈80%, >800≈100%.
+  # Multiplies MoveAbsJ/MoveL speed. Set explicitly so a previous SDK client
+  # cannot leave the controller at an unexpectedly low NRT speed scale.
+  online_speed_scale: 1.0
+  joint_speed: 300
+  cartesian_speed: 20
+  timeout: 60.0
+  max_joint_delta: 0.25
+  max_translation_delta: 0.05
+  max_rotation_delta: 0.20
+
+teleoperation:
+  translation_scale: 0.60
+  rotation_scale: 0.70
+  quest_to_robot_rotation:
+    [1.0, 0.0, 0.0,
+     0.0, 1.0, 0.0,
+     0.0, 0.0, 1.0]
+
+safety:
+  # Low-lag candidate profile. It is one moderate step faster than the stable
+  # commissioning profile while retaining deadband, low-pass filtering and
+  # explicit velocity/acceleration/jerk bounds.
+  translation_cutoff_hz: 5.0
+  rotation_cutoff_hz: 5.0
+  translation_deadband: 0.001
+  rotation_deadband: 0.008
+  max_translation_speed: 0.15
+  max_angular_speed: 0.50
+  max_translation_acceleration: 0.40
+  max_angular_acceleration: 1.50
+  max_translation_jerk: 2.5
+  max_angular_jerk: 8.0
+  max_target_translation_delta: 0.25
+  max_target_rotation_delta: 1.0
+  workspace_min: [-1.2, -1.2, -1.2]
+  workspace_max: [1.2, 1.2, 1.2]
+  hold_timeout: 0.15
+  stop_timeout: 0.60
+  max_source_age: 0.20
+  future_tolerance: 0.05
+
+realtime_test:
+  amplitude: 0.005
+  frequency: 0.10
+  duration: 5.0
+  update_hz: 100.0
+  axis: x
+
+mock:
+  initial_pose_xyzw: [0.45, 0.0, 0.35, 0.0, 0.0, 0.0, 1.0]

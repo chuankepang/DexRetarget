@@ -120,25 +120,30 @@ class _HandState:
     landmarks_local: Optional[np.ndarray] = None
     last_update: float = field(default_factory=time.monotonic)
     wrist_last_update: Optional[float] = None
+    landmarks_last_update: Optional[float] = None
 
-    def update_wrist(self, data: Iterable[float]) -> None:
+    def update_wrist(self, data: Iterable[float]) -> bool:
         values = np.array(list(data), dtype=float)
-        if values.size < 7:
-            return
+        # HTS protocol: exactly xyz + quaternion xyzw.  Reject malformed or
+        # concatenated packets instead of refreshing a safety timestamp.
+        if values.size != 7 or not np.all(np.isfinite(values)):
+            return False
         self.wrist_position = _convert_vec(values[:3])
         self.wrist_quat = _convert_quat(values[3:7])
         self.last_update = time.monotonic()
         self.wrist_last_update = self.last_update
+        return True
 
-    def update_landmarks(self, data: Iterable[float]) -> None:
+    def update_landmarks(self, data: Iterable[float]) -> bool:
         values = np.array(list(data), dtype=float)
-        if values.size < 3:
-            return
-        if values.size % 3 != 0:
-            values = values[: values.size - (values.size % 3)]
-        reshaped = values.reshape((-1, 3))
+        # HTS protocol: 21 landmarks * xyz = exactly 63 scalar values.
+        if values.size != 63 or not np.all(np.isfinite(values)):
+            return False
+        reshaped = values.reshape((21, 3))
         self.landmarks_local = (_UNITY_TO_RH @ reshaped.T).T
         self.last_update = time.monotonic()
+        self.landmarks_last_update = self.last_update
+        return True
 
     def world_points(self) -> Optional[np.ndarray]:
         """Return landmarks transformed to world space (N, 3)."""
@@ -202,6 +207,23 @@ class Quest3:
         }
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._error: Optional[Exception] = None
+        self._stats: dict[str, object] = {
+            "packets": 0,
+            "bytes": 0,
+            "lines": 0,
+            "valid_wrist": 0,
+            "valid_landmarks": 0,
+            "valid_left_wrist": 0,
+            "valid_left_landmarks": 0,
+            "valid_right_wrist": 0,
+            "valid_right_landmarks": 0,
+            "rejected_lines": 0,
+            "rejected_payloads": 0,
+            "utf8_errors": 0,
+            "last_peer": None,
+            "last_rejected_line": None,
+        }
         self._smoother = MediaPipeSmoother(buffer_size=5)
 
         # Start receiver thread
@@ -264,6 +286,45 @@ class Quest3:
             "timestamp": timestamp,
         }
 
+    def get_hand_tracking_data(self, hand_side: str = "right") -> dict:
+        """Return one lock-consistent wrist/landmark snapshot for teleoperation.
+
+        ``wrist`` or ``fingers`` is ``None`` until that part of the stream has
+        arrived.  Separate monotonic timestamps let consumers independently
+        reject stale arm and gripper data.
+        """
+        side = hand_side.lower()
+        if side not in self._hands:
+            raise ValueError(f"hand_side must be 'left' or 'right', got '{hand_side}'")
+
+        with self._lock:
+            hand = self._hands[side]
+            wrist = None
+            if (
+                hand.wrist_position is not None
+                and hand.wrist_quat is not None
+                and hand.wrist_last_update is not None
+            ):
+                quaternion = hand.wrist_quat.copy()
+                wrist = {
+                    "position": hand.wrist_position.copy(),
+                    "quaternion": quaternion,
+                    "rotation": _quat_to_matrix(quaternion),
+                    "timestamp": float(hand.wrist_last_update),
+                }
+            points = hand.world_points()
+            fingers = None if points is None else points.astype(np.float32)
+            landmarks_timestamp = hand.landmarks_last_update
+
+        return {
+            "side": side,
+            "wrist": wrist,
+            "fingers": fingers,
+            "landmarks_timestamp": (
+                None if landmarks_timestamp is None else float(landmarks_timestamp)
+            ),
+        }
+
     def stop(self) -> None:
         """Stop the receiver thread."""
         self._stop.set()
@@ -273,25 +334,67 @@ class Quest3:
             if t.is_alive():
                 t.join(timeout=0.5)
 
+    @property
+    def error(self) -> Optional[Exception]:
+        """Return a fatal receiver-thread error, if one occurred."""
+        return self._error
+
+    @property
+    def stats(self) -> dict[str, object]:
+        """Thread-safe receiver diagnostics for network/format bring-up."""
+        with self._lock:
+            return dict(self._stats)
+
     # -- internal receiver --
 
     def _handle_line(self, line: str) -> None:
         parsed = _parse_line(line)
-        if not parsed:
-            return
-        side, kind, floats = parsed
         with self._lock:
+            self._stats["lines"] = int(self._stats["lines"]) + 1
+            if not parsed:
+                self._stats["rejected_lines"] = int(self._stats["rejected_lines"]) + 1
+                self._stats["last_rejected_line"] = line[:160]
+                return
+            side, kind, floats = parsed
             hand = self._hands[side]
             if kind == "wrist":
-                hand.update_wrist(floats)
+                valid = hand.update_wrist(floats)
+                counter = "valid_wrist"
             elif kind == "landmarks":
-                hand.update_landmarks(floats)
+                valid = hand.update_landmarks(floats)
+                counter = "valid_landmarks"
+            else:  # pragma: no cover - guarded by _parse_line
+                valid = False
+                counter = "rejected_payloads"
+            if valid:
+                self._stats[counter] = int(self._stats[counter]) + 1
+                side_counter = f"valid_{side}_{kind}"
+                self._stats[side_counter] = int(self._stats[side_counter]) + 1
+            else:
+                self._stats["rejected_payloads"] = int(
+                    self._stats["rejected_payloads"]
+                ) + 1
+                self._stats["last_rejected_line"] = line[:160]
+
+    def _record_packet(self, byte_count: int, peer: object) -> None:
+        with self._lock:
+            self._stats["packets"] = int(self._stats["packets"]) + 1
+            self._stats["bytes"] = int(self._stats["bytes"]) + byte_count
+            self._stats["last_peer"] = str(peer)
+
+    def _record_utf8_error(self) -> None:
+        with self._lock:
+            self._stats["utf8_errors"] = int(self._stats["utf8_errors"]) + 1
 
     def _run(self) -> None:
-        if self._protocol == "udp":
-            self._run_udp()
-        else:
-            self._run_tcp()
+        try:
+            if self._protocol == "udp":
+                self._run_udp()
+            else:
+                self._run_tcp()
+        except Exception as exc:  # Surface background socket failures to callers.
+            self._error = exc
+            logger.exception("Quest3 receiver stopped")
 
     def _run_udp(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -302,14 +405,16 @@ class Quest3:
         try:
             while not self._stop.is_set():
                 try:
-                    data, _addr = sock.recvfrom(65536)
+                    data, addr = sock.recvfrom(65536)
                 except socket.timeout:
                     continue
                 except OSError:
                     break
+                self._record_packet(len(data), addr)
                 try:
                     message = data.decode("utf-8")
                 except UnicodeDecodeError:
+                    self._record_utf8_error()
                     continue
                 for line in message.splitlines():
                     if line:
@@ -350,9 +455,11 @@ class Quest3:
                     continue
                 if not data:
                     break
+                self._record_packet(len(data), addr)
                 try:
                     buffer += data.decode("utf-8")
                 except UnicodeDecodeError:
+                    self._record_utf8_error()
                     continue
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)

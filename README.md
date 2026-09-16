@@ -6,6 +6,18 @@
 
 High-precision hand pose retargeting system. Supports two optimizers (**Adaptive** and **KeyVector**), multiple dexterous hands, and multiple hand-tracking input sources for simulation and teleoperation.
 
+## Local robot integrations
+
+- Quest 3 + Inspire Hand + ROKAE xCoreSDK: [README_QUEST3_INSPIRE_ROKAE.md](README_QUEST3_INSPIRE_ROKAE.md)
+- Quest 3 + KUKA iiwa + Robotiq: [README_QUEST3_DUAL_IIWA_ROBOTIQ.md](README_QUEST3_DUAL_IIWA_ROBOTIQ.md)
+
+These are separate backends. Do not mix their YAML files, network ports, drivers,
+or shutdown protocols.
+
+For the Orin Quest 3 + ROKAE workflow, use the existing Conda environment
+`/SSD-512G/conda_envs/anydex` (Python 3.10), not `base`. The complete activation
+and `LD_LIBRARY_PATH` commands are in the ROKAE guide above.
+
 ## Demo
 
 ### Simulation Retargeting

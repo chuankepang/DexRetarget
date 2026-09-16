@@ -1,0 +1,140 @@
+# Quest publisher -> dual KUKA iiwa Cartesian execution bridge.
+# Left-arm POE/extrinsic values come from the supplied platform document.
+# Right-arm values are disabled placeholders. True output is blocked until
+# each enabled arm has model_confirmed and calibration_confirmed set true.
+network:
+  listen_host: 0.0.0.0
+  listen_port: 10000
+  # The publisher runs at 30 Hz. A 0.25 s gap cancels the active target.
+  command_timeout_s: 0.25
+  max_datagram_bytes: 8192
+
+solver:
+  position_tolerance_m: 0.0005
+  rotation_tolerance_rad: 0.005
+  max_iterations: 80
+  damping: 0.03
+  orientation_weight_m: 0.25
+  max_iteration_joint_step_rad: 0.15
+  candidate_count: 9
+  continuity_weight: 1.0
+  limit_weight: 0.02
+
+safety:
+  max_start_position_error_m: 0.03
+  max_start_rotation_error_rad: 0.15
+  max_target_translation_step_m: 0.02
+  max_target_rotation_step_rad: 0.10
+  max_command_joint_step_rad: 0.035
+  fk_state_position_tolerance_m: 0.03
+  fk_state_rotation_tolerance_rad: 0.20
+
+arms:
+  left:
+    enabled: true
+    robot_ip: 192.168.1.101
+    robot_port: 30002
+    model_confirmed: true
+    calibration_confirmed: true
+    model: iiwa14_poe_from_platform_document
+    kinematics: poe
+    # Table 10, space screws S=[omega,v], metres. v=-omega x q.
+    space_screw_axes:
+      - [0.0, 0.0, 1.0,  0.0,   0.0, 0.0]
+      - [0.0, 1.0, 0.0, -0.36,  0.0, 0.0]
+      - [0.0, 0.0, 1.0,  0.0,   0.0, 0.0]
+      - [0.0,-1.0, 0.0,  0.78,  0.0, 0.0]
+      - [0.0, 0.0, 1.0,  0.0,   0.0, 0.0]
+      - [0.0, 1.0, 0.0, -1.18,  0.0, 0.0]
+      - [0.0, 0.0, 1.0,  0.0,   0.0, 0.0]
+    home_base_T_flange:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 1.332]
+      - [0.0, 0.0, 0.0, 1.0]
+    joint_zero_offset_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    joint_min_rad: [-2.9671, -2.0944, -2.9671, -2.0944, -2.9671, -2.0944, -3.0543]
+    joint_max_rad: [2.9671, 2.0944, 2.9671, 2.0944, 2.9671, 2.0944, 3.0543]
+    # Flange_T_TCP: include the Robotiq adapter/tool offset here.
+    flange_T_tcp:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    # W0_T_BL = Tz(1.217) Ty(0.193) Rx(-30deg) Rz(45deg).
+    world_T_base:
+      - [0.7071067812, -0.7071067812, 0.0, 0.0]
+      - [0.6123724357,  0.6123724357, 0.5, 0.193]
+      - [-0.3535533906, -0.3535533906, 0.8660254038, 1.217]
+      - [0.0, 0.0, 0.0, 1.0]
+    # The custom TCP server reports pose with the installation rotation but
+    # keeps the Cartesian origin at B_L. Derived and verified from the supplied
+    # live sample: R*FK(q) = [389.199,706.127,444.650] mm versus received
+    # [389.2,706.0,444.6] mm. Do NOT put the platform translation in this one.
+    controller_pose_T_base:
+      - [0.7071067812, -0.7071067812, 0.0, 0.0]
+      - [0.6123724357,  0.6123724357, 0.5, 0.0]
+      - [-0.3535533906, -0.3535533906, 0.8660254038, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    # Startup movement is temporarily disabled. To restore it later, set this
+    # to true and uncomment initial_world_T_tcp plus the verified IK seeds.
+    move_to_initial_on_start: false
+    # initial_world_T_tcp:
+    #   - [1.0, 0.0, 0.0, 0.400]
+    #   - [0.0, 1.0, 0.0, 0.500]
+    #   - [0.0, 0.0, 1.0, 1.400]
+    #   - [0.0, 0.0, 0.0, 1.0]
+    # initial_ik_seed_candidates_rad:
+    #   - [0.5812, 1.5535, -1.0726, -1.8158, 2.1549, -1.7771, 0.6369]
+    #   - [0.6986, 1.8530, 1.8141, 1.8163, -0.7534, -1.5167, 0.4192]
+    initial_ik_candidate_count: 32
+    initial_min_joint_margin_rad: 0.10
+    initial_motion_countdown_s: 5.0
+    initial_move_duration_s: 6.0
+    initial_servo_rate_hz: 100.0
+    initial_max_joint_speed_rad_s: 0.6
+    initial_settle_timeout_s: 3.0
+    initial_joint_tolerance_rad: 0.03
+    initial_position_tolerance_m: 0.01
+    initial_rotation_tolerance_rad: 0.05
+    # Bridge IK targets update at 30 Hz; the low-level driver continuously
+    # refreshes only the latest joint target to the controller at 100 Hz.
+    smart_servo_rate_hz: 100.0
+    smart_servo_target_timeout_s: 0.20
+    # Quest hand gesture contract: 0=open_position, 1=close_position.
+    # The mode command must settle before its position command is sent.
+    gripper_mode_settle_s: 0.15
+    gripper_close_position: 100
+    gripper_open_position: 30
+
+  right:
+    enabled: false
+    robot_ip: 192.168.1.102
+    robot_port: 30002
+    model_confirmed: false
+    calibration_confirmed: false
+    model: iiwa7_r800
+    dh_d_m: [0.34, 0.0, 0.40, 0.0, 0.40, 0.0, 0.126]
+    dh_a_m: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    dh_alpha_rad: [1.5707963267948966, -1.5707963267948966, -1.5707963267948966, 1.5707963267948966, 1.5707963267948966, -1.5707963267948966, 0.0]
+    joint_zero_offset_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    joint_min_rad: [-2.9671, -2.0944, -2.9671, -2.0944, -2.9671, -2.0944, -3.0543]
+    joint_max_rad: [2.9671, 2.0944, 2.9671, 2.0944, 2.9671, 2.0944, 3.0543]
+    flange_T_tcp:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    # Fill the measured W_T_B_right 4x4 transform.
+    world_T_base:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    controller_pose_T_base:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    gripper_close_position: 100
+    gripper_open_position: 30

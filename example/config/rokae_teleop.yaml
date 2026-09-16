@@ -1,40 +1,77 @@
-# ROKAE Cartesian teleoperation configuration.
-# All translations use metres, rotations use radians, quaternions use XYZW.
+# Quest 3 -> ROKAE realtime Cartesian teleoperation.
+# Translation: metres. Rotation: radians. Quaternion order: XYZW.
 
 robot:
-  type: xmate-er-pro-7        # xmate-6 | xmate-er-pro-7 | standard-6
+  type: xmate-er-pro-7          # xmate-6 | xmate-er-pro-7 | standard-6
   ip: 192.168.0.160
-  local_ip: 192.168.0.100     # Jetson wired interface used by realtime traffic
-  control_hz: 1000
+  local_ip: 192.168.0.100       # Orin wired NIC used only for ROKAE realtime traffic
+  control_hz: 1000              # informational: C++ xCoreSDK callback is fixed at 1 ms
+  sdk_callback_hz: 1000
   rt_network_tolerance: 20
+  controller_rate_limit: true
+  controller_filter_cutoff_hz: 30.0
 
-  # Pose of the robot base in the shared world: T_world_base.
-  # Change only this transform for upright, inverted, or tilted mounting.
+  # Non-realtime MoveAbsJ to the configured teleoperation init pose.
+  # All seven values and max_joint_delta are radians.
+  initial_joint_move:
+    enabled: true
+    joint_position: [0.0, -0.60, 0.0, 1.40, 0.0, 0.75, 1.5707963268]
+    joint_waypoints:
+      - [0.0, -0.60, 0.0, 1.40, 0.0, 0.75, -1.5707963268]
+      - [0.0, -0.60, 0.0, 1.40, 0.0, 0.75, 0.0]
+    joint_speed: 0.05            # maps to SDK speed 50: lowest (<100) tier
+    online_speed_scale: 0.20     # init-only NRT multiplier; no RT effect
+    max_segment_delta: 0.30      # interpolate coarse path, rad per command
+    timeout: 60.0
+    max_joint_delta: 1.60        # reject a larger one-shot change, radians
+    min_joint_limit_margin: 0.174533
+    min_shoulder_bend: 0.35
+    min_elbow_bend: 0.35
+    min_wrist_bend: 0.35
+
+  # T_world_base: pose of the ROKAE base frame in the shared world frame.
+  # Current upright installation: R_world_base is identity; XYZ is a placeholder.
   base_transform:
     pose_xyzw: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  require_controller_base_rotation_identity: true
+  controller_base_rotation_tolerance: 0.02
 
 teleoperation:
-  translation_scale: 0.5
-  rotation_scale: 0.7
+  translation_scale: 0.60
+  rotation_scale: 0.70
 
-  # Proper rotation C mapping Quest-reference axes to robot-reference axes.
-  # quest3.py already exposes x-forward, y-left, z-up.
+  # Proper rotation C mapping Quest-relative axes to robot/world incremental axes.
+  # quest3.py outputs a right-handed x-forward, y-left, z-up frame.
   quest_to_robot_rotation:
     [1.0, 0.0, 0.0,
      0.0, 1.0, 0.0,
      0.0, 0.0, 1.0]
 
 safety:
-  max_translation_speed: 0.20  # m/s
-  max_angular_speed: 0.80      # rad/s
-  max_translation_delta: 0.005 # m per Quest update
-  max_rotation_delta: 0.02     # rad per Quest update
-  low_pass_alpha: 0.25         # (0, 1], smaller is smoother
-  command_timeout: 0.20        # seconds; hold and re-reference after timeout
+  # Time-constant filters evaluated at the robot callback rate.  Rotation uses SLERP.
+  translation_cutoff_hz: 5.0
+  rotation_cutoff_hz: 5.0
+  translation_deadband: 0.001
+  rotation_deadband: 0.008
 
-  # Axis-aligned TCP workspace in the ROKAE base frame.
-  workspace_min: [-1.2, -1.2, -0.1]
-  workspace_max: [1.2, 1.2, 1.5]
+  max_translation_speed: 0.15
+  max_angular_speed: 0.50
+  max_translation_acceleration: 0.40
+  max_angular_acceleration: 1.50
+  max_translation_jerk: 2.5
+  max_angular_jerk: 8.0
+  max_target_translation_delta: 0.25
+  max_target_rotation_delta: 1.0
+
+  # Axis-aligned TCP box in the ROKAE base frame.  Replace with the verified cell limits.
+  workspace_min: [-1.2, -1.2, -1.2]
+  workspace_max: [1.2, 1.2, 1.2]
+
+  # Short dropout: decelerate/hold. Long dropout: finish realtime motion safely.
+  hold_timeout: 0.15
+  stop_timeout: 0.60
+  max_source_age: 0.20
+  future_tolerance: 0.05
 
 mock:
   initial_pose_xyzw: [0.45, 0.0, 0.35, 0.0, 0.0, 0.0, 1.0]

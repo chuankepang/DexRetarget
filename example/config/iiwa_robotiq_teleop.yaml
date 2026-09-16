@@ -1,0 +1,92 @@
+# Quest 3 -> dual KUKA iiwa + Robotiq 3F command-output configuration.
+#
+# Current deployment enables only the left arm. Its document-derived base
+# transform is filled below; right-arm values remain disabled placeholders.
+
+quest:
+  host: 0.0.0.0
+  port: 9000
+  protocol: udp
+
+publisher:
+  # The robot bridge anchors these world-frame deltas at the measured TCP pose
+  # on first enable; a stale manually entered TCP start pose cannot cause jump.
+  arm_command_contract: reference_relative_world_delta.v1
+  # Destination of the separate KUKA/Robotiq low-level control computer.
+  # 127.0.0.1 is a safe local-test default. Replace it with that computer's
+  # teleoperation-LAN IP (for example 192.168.1.120) before remote integration.
+  command_host: 127.0.0.1
+  command_port: 10000
+  # Always use only the newest Quest sample; obsolete frames are never queued.
+  # 30 Hz gives the bridge frequent IK targets while the low-level KUKA driver
+  # refreshes the current joint target to the controller at 100 Hz.
+  command_period_s: 0.0333333333
+  rate_hz: 30.0            # legacy equivalent; command_period_s takes priority
+  tracking_timeout: 0.25
+  print_hz: 2.0
+  # In relative-delta mode print world dp/dr; absolute mode prints W_T_TCP.
+  print_world_tcp_target: true
+  # Keep false during bring-up. SIGUSR2 toggles enable/disable at runtime.
+  start_armed: false
+
+arms:
+  left:
+    enabled: true
+    base_frame: left_base
+    tcp_frame: left_tcp
+    reference_pose_configured: false
+    base_tcp_reference_pose_xyzw: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    world_base_pose_configured: true
+    # W0_T_BL from the supplied platform document. Translation is metres.
+    world_T_base:
+      - [0.7071067812, -0.7071067812, 0.0, 0.0]
+      - [0.6123724357, 0.6123724357, 0.5, 0.193]
+      - [-0.3535533906, -0.3535533906, 0.8660254038, 1.217]
+      - [0.0, 0.0, 0.0, 1.0]
+    # quest3.py already converts Unity axes to x-forward, y-left, z-up. This
+    # proper rotation maps those axes into the chosen shared world axes.
+    quest_to_world_rotation_configured: true
+    quest_to_world_rotation:
+      - [1.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0]
+      - [0.0, 0.0, 1.0]
+    # Conservative scaling keeps hand motion manageable. Translation was
+    # enlarged slightly: 10 cm Quest motion -> 3 cm TCP motion. Rotation stays
+    # at 0.2, so a 1 rad hand rotation -> 0.2 rad TCP rotation.
+    translation_scale: 0.5
+    rotation_scale: 0.2
+    # Light filtering at 30 Hz suppresses hand jitter without seconds of lag.
+    low_pass_alpha: 0.5
+    max_translation_m: 0.50
+    max_rotation_rad: 3.141592653589793
+
+  right:
+    enabled: false
+    base_frame: right_base
+    tcp_frame: right_tcp
+    reference_pose_configured: false
+    base_tcp_reference_pose_xyzw: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    world_base_pose_configured: false
+    # W_T_B_right. Translation is metres. Identity is a placeholder.
+    world_T_base:
+      - [1.0, 0.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+    # Usually both hands use the same Quest-to-world rotation. The two KUKA
+    # mounting differences belong in world_base_pose_xyzw, not in this matrix.
+    quest_to_world_rotation_configured: false
+    quest_to_world_rotation:
+      - [1.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0]
+      - [0.0, 0.0, 1.0]
+    translation_scale: 1.0
+    rotation_scale: 1.0
+    low_pass_alpha: 0.35
+    max_translation_m: 0.50
+    max_rotation_rad: 3.141592653589793
+
+grippers:
+  # Output convention: 0 = open, 1 = close.
+  close_threshold: 0.62
+  open_threshold: 0.38
