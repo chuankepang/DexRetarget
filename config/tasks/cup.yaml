@@ -1,0 +1,53 @@
+# 单位除特别说明外：米、弧度、秒。请先阅读 docs/ik_config_audit.md。
+# 任务配置格式版本；加载器严格校验字段。
+schema_version: dexretarget.task.v1
+# 任务唯一标识；写入 episode 元数据。
+task_id: cup_pick_place
+# 默认自然语言任务描述；CLI --task 可覆盖。
+instruction: "pick up the cup and place it in the tray"
+# 任务启动时选用的设备连接/映射设置，显式 CLI 优先。
+teleop:
+  # 机器人默认配置唯一入口；路径相对仓库根目录。
+  arm_config: config/robots/rokae.yaml
+  # 左右手选择。
+  hand: right
+  # Quest 接收协议。
+  quest3_protocol: udp
+  # Quest 接收端口。
+  quest3_port: 9000
+  # 灵巧手串口设备。
+  inspire_port: /dev/ttyUSB0
+  # 串口波特率。
+  inspire_baudrate: 115200
+  # 灵巧手协议地址，不是左右手标识。
+  inspire_hand_id: 1
+  # 终端周期状态打印频率，0 关闭；不改变控制/采样频率。
+  arm_print_hz: 0
+# 采集功能默认；--capture / --no-capture 可覆盖。
+collection:
+  # 默认启用采集源；r 才创建 episode。
+  enabled: true
+  # 采样/同步/存储配置引用；不是把采集参数复制到任务。
+  config: config/collection/collection.json
+# Cup 专属 home：启动与 h 使用；不要求每次按 r 时在 home，也不指定 IK 零空间参考。
+home:
+  # 是否启动回任务 home；覆盖机器人 initial_joint_move.enabled。
+  on_start: true
+  # Original cup joint_position: [0.0, 0.35, 0.0, 1.85, 0.0, -0.6292036732, 1.5707963268]
+  # Previous local trial: [0.0, 0.13323130, 0.0, 1.17304764, 0.0, 1.2835298642, 0.0]
+  # rad，J1..J7；覆盖通用启动 joint_position，并作为 h 的目标。
+  arm_joints: [0.0, 0.13323130, 0.0, 1.17304764, 0.0, 1.2835298642, 0.0]
+  # 六个原生 0..1000 寄存器；null 保持手目标，不自动张开。
+  hand_angles: null
+  # 关节路径中间点，单位 rad；空列表走分段直达，不能自动避障。
+  joint_waypoints: []
+  # 乘 1000 得 SDK 150；覆盖通用启动速度，在线倍率继承机器人 init。
+  joint_speed: 0.15
+  # 秒；覆盖启动 timeout；h 路径也使用。
+  timeout_s: 30
+  # rad/段；覆盖通用初始化分段上限，也用于 h。
+  max_segment_delta: 0.15
+  # rad；启动/home 完成时的实测关节误差阈值。
+  joint_tolerance_rad: 0.02
+# 人读场景说明，仅记录，不执行动作。
+scene_setup: "Configure cup/tray positions and verify clearance before collecting."

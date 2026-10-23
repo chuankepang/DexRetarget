@@ -89,6 +89,36 @@ class RelativePoseMappingTest(unittest.TestCase):
             result.base_target[:3, :3], spatial_delta, atol=1e-10
         )
 
+    def test_world_x_wrist_roll_maps_to_init_tcp_z_roll(self) -> None:
+        # The configured upright init aligns TCP +Z (and J7) with world +X.
+        # Therefore a spatial world-X wrist roll must become a pure local TCP-Z
+        # rotation in the Cartesian target; it must not disappear into a
+        # translation or an unchanged end-effector orientation.
+        robot_rotation = np.array(
+            [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        )
+        robot_ref = make_transform([0.681311, 0.0, 0.496221], robot_rotation)
+        vr_rotation = rotation_vector_to_matrix([0.2, -0.1, 0.3])
+        vr_ref = make_transform([0.2, 0.3, 0.4], vr_rotation)
+        angle = np.deg2rad(20.0)
+        vr_current = vr_ref.copy()
+        vr_current[:3, :3] = rotation_vector_to_matrix([angle, 0.0, 0.0]) @ vr_rotation
+
+        mapper = self.mapper()
+        mapper.set_reference(vr_ref, robot_ref)
+        result = mapper.update(vr_current)
+
+        mapped_world = matrix_to_rotation_vector(result.mapped_relative[:3, :3])
+        target_world = matrix_to_rotation_vector(
+            result.base_target[:3, :3] @ robot_ref[:3, :3].T
+        )
+        target_tcp = matrix_to_rotation_vector(
+            robot_ref[:3, :3].T @ result.base_target[:3, :3]
+        )
+        np.testing.assert_allclose(mapped_world, [angle, 0.0, 0.0], atol=1e-10)
+        np.testing.assert_allclose(target_world, [angle, 0.0, 0.0], atol=1e-10)
+        np.testing.assert_allclose(target_tcp, [0.0, 0.0, angle], atol=1e-10)
+
 
 if __name__ == "__main__":
     unittest.main()

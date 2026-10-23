@@ -1,0 +1,5 @@
+Robot=xMatePro3 controller=2.3.2 SDK=0.3.4
+Active controller mass=0.939386 kg; requested=0.939386 kg
+Applying calibrated mass/CoM; preserving controller inertia (zero is unverified).
+Fixed equilibrium; first 2 seconds DO NOT TOUCH. Ctrl+C requests stop.
+Stopped: joint_speed; samples=114; trace=/data/Projects/DexRetarget/data/diagnostics/impedance_test/hold_1jjub90t/trace.csv

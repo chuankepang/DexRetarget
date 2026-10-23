@@ -12,10 +12,33 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from example.output.real.drivers_rokae import RokaeXCoreDriver
+from dexretarget.teleop.devices.rokae import RokaeXCoreDriver
 from anydexretarget.teleop import RealtimeCartesianConfig
 
-DEFAULT_CONFIG = PROJECT_ROOT / "rokae" / "config" / "rokae.yaml"
+DEFAULT_CONFIG = PROJECT_ROOT / "config/robots/rokae.yaml"
+
+
+def init_joint_position(config: dict[str, Any], pose: str) -> np.ndarray:
+    """Return one saved 7-joint init, in radians.
+
+    ``teleop`` is the human-like wrist-forward pose in ``initial_joint_move``.
+    ``manipulation`` is a legacy demo preset, not the task-profile home.
+    Its edited values are not guaranteed to point the tool down.
+    """
+    robot = config["robot"]
+    if pose == "teleop":
+        values = robot["initial_joint_move"]["joint_position"]
+    elif pose == "manipulation":
+        block = robot.get("manipulation_init")
+        if not isinstance(block, dict) or block.get("joint_position") is None:
+            raise KeyError("robot.manipulation_init.joint_position is missing")
+        values = block["joint_position"]
+    else:
+        raise ValueError("pose must be teleop or manipulation")
+    joints = np.asarray(values, dtype=np.float64)
+    if joints.shape != (7,) or not np.all(np.isfinite(joints)):
+        raise ValueError(f"{pose} init must contain 7 finite joint angles")
+    return joints
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -113,6 +136,18 @@ def build_driver(
 
 def format_vector(values: Any) -> str:
     return "[" + ", ".join(f"{float(v):+.8f}" for v in values) + "]"
+
+
+def print_controller_logs(driver: RokaeXCoreDriver) -> None:
+    """Read-only diagnostics; timestamps may refer to earlier operations."""
+    print("Recent controller logs (up to 10; may include earlier events):")
+    rows = driver.get_controller_logs(10)
+    if not rows:
+        print("  No controller logs returned.")
+    for row in rows:
+        print(f"  [{row['timestamp']}] {row['id']}: {row['content']}")
+        if row["repair"]:
+            print(f"    controller guidance: {row['repair']}")
 
 
 def format_pose(pose: np.ndarray) -> str:

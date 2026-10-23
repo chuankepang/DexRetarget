@@ -1,0 +1,48 @@
+{
+  "schema_version": "dexretarget.episode.v1",
+  "dataset_name": "quest_inspire_rokae",
+  "output_root": "data/raw",
+  "camera_config": "config/cameras/realsense.json",
+  "camera_python": "/data/miniconda3/envs/dexteleop/bin/python",
+  "camera_warmup_s": 5.0,
+  "sample_hz": 20,
+  "arm_state_hz": 50,
+  "hand_feedback_hz": 20,
+  "hand_feedback_timeout_s": 0.025,
+  "read_hand_force": true,
+  "jpeg_quality": 95,
+  "queue_capacity": 512,
+  "max_episode_s": 300,
+  "min_free_disk_gb": 5.0,
+  "sync": {
+    "max_camera_age_s": 0.10,
+    "max_arm_age_s": 0.10,
+    "max_hand_age_s": 0.15,
+    "max_camera_skew_s": 0.040,
+    "max_state_read_s": 0.030,
+    "max_action_skew_s": 0.050,
+    "max_quest_age_s": 0.20,
+    "min_segment_frames": 20
+  },
+  "representation": {
+    "frame": "robot_base",
+    "tcp": "xyz_m_rotvec_rad",
+    "hand": "inspire_angle_register_div_1000",
+    "hand_channels": ["little", "ring", "middle", "index", "thumb_bend", "thumb_rotation"],
+    "hand_direction": "native ANGLE_SET/ANGLE_ACT register convention; no additional inversion",
+    "state_dim": 12,
+    "action_dim": 12,
+    "model_action_dim": 32,
+    "action_semantics": "first accepted controller TCP reference and acknowledged hand target in [t,t+1/sample_hz)",
+    "arm_target_stage": "controller input after controller-specific equilibrium limiting, before realtime smoothing",
+    "observation_semantics": "latest received sample at or before t; no future observations",
+    "arm_hand_atomic": false
+  },
+  "storage": {
+    "container": "hdf5",
+    "color_encoding": "jpeg",
+    "depth_encoding": "png16",
+    "numeric_compression": "lzf",
+    "deletion": "atomic rename to dataset/.trash; no permanent delete command"
+  }
+}

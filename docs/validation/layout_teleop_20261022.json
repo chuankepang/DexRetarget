@@ -1,0 +1,8 @@
+{
+  "teleop_only": true,
+  "serial_transactions": {
+    "writes": 84,
+    "reads": 0
+  },
+  "startup_pause_enable_pause_home_quit": true
+}

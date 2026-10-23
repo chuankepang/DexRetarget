@@ -1,0 +1,304 @@
+{
+  "robot": {
+    "type": "xmate-er-pro-7",
+    "ip": "192.168.0.160",
+    "local_ip": "192.168.0.100",
+    "control_hz": 1000,
+    "sdk_callback_hz": 1000,
+    "rt_network_tolerance": 20,
+    "controller_rate_limit": true,
+    "controller_filter_cutoff_hz": 30.0,
+    "initial_joint_move": {
+      "enabled": true,
+      "joint_position": [
+        0.0,
+        0.35,
+        0.0,
+        1.85,
+        0.0,
+        -0.6292036732,
+        1.5707963268
+      ],
+      "joint_speed": 0.25,
+      "online_speed_scale": 0.2,
+      "max_segment_delta": 0.35,
+      "timeout": 60.0,
+      "recovery_trigger_margin": 0.15,
+      "recovery_clearance": 0.35,
+      "recovery_speed": 20,
+      "recovery_timeout": 60.0,
+      "min_joint_limit_margin": 0.174533,
+      "min_shoulder_bend": 0.35,
+      "min_elbow_bend": 0.35,
+      "min_wrist_bend": 0.35
+    },
+    "manipulation_init": {
+      "joint_position": [
+        0.0,
+        0.436332313,
+        0.0,
+        1.2217304764,
+        0.0,
+        1.4835298642,
+        0.0
+      ]
+    },
+    "base_transform": {
+      "pose_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    "require_controller_base_rotation_identity": true,
+    "controller_base_rotation_tolerance": 0.02
+  },
+  "safety": {
+    "translation_cutoff_hz": 5.0,
+    "rotation_cutoff_hz": 5.0,
+    "translation_deadband": 0.001,
+    "rotation_deadband": 0.008,
+    "max_translation_speed": 0.15,
+    "max_angular_speed": 0.5,
+    "max_translation_acceleration": 0.4,
+    "max_angular_acceleration": 1.5,
+    "max_translation_jerk": 2.5,
+    "max_angular_jerk": 8.0,
+    "max_target_translation_delta": 0.25,
+    "max_target_rotation_delta": 1.0,
+    "workspace_min": [
+      -1.2,
+      -1.2,
+      -1.2
+    ],
+    "workspace_max": [
+      1.2,
+      1.2,
+      1.2
+    ],
+    "hold_timeout": 0.15,
+    "stop_timeout": 0.6,
+    "max_source_age": 0.2,
+    "future_tolerance": 0.05
+  },
+  "cases": [
+    {
+      "override": {},
+      "expected": {
+        "control_hz": 1000.0,
+        "translation_cutoff_hz": 5.0,
+        "rotation_cutoff_hz": 5.0,
+        "translation_deadband": 0.001,
+        "rotation_deadband": 0.008,
+        "max_translation_speed": 0.15,
+        "max_angular_speed": 0.5,
+        "max_translation_acceleration": 0.4,
+        "max_angular_acceleration": 1.5,
+        "max_translation_jerk": 2.5,
+        "max_angular_jerk": 8.0,
+        "max_target_translation_delta": 0.25,
+        "max_target_rotation_delta": 1.0,
+        "workspace_min": [
+          -1.2,
+          -1.2,
+          -1.2
+        ],
+        "workspace_max": [
+          1.2,
+          1.2,
+          1.2
+        ],
+        "hold_timeout": 0.15,
+        "stop_timeout": 0.6,
+        "max_source_age": 0.2,
+        "future_tolerance": 0.05
+      }
+    },
+    {
+      "override": {
+        "arm_translation_cutoff_hz": 7.0
+      },
+      "expected": {
+        "control_hz": 1000.0,
+        "translation_cutoff_hz": 7.0,
+        "rotation_cutoff_hz": 5.0,
+        "translation_deadband": 0.001,
+        "rotation_deadband": 0.008,
+        "max_translation_speed": 0.15,
+        "max_angular_speed": 0.5,
+        "max_translation_acceleration": 0.4,
+        "max_angular_acceleration": 1.5,
+        "max_translation_jerk": 2.5,
+        "max_angular_jerk": 8.0,
+        "max_target_translation_delta": 0.25,
+        "max_target_rotation_delta": 1.0,
+        "workspace_min": [
+          -1.2,
+          -1.2,
+          -1.2
+        ],
+        "workspace_max": [
+          1.2,
+          1.2,
+          1.2
+        ],
+        "hold_timeout": 0.15,
+        "stop_timeout": 0.6,
+        "max_source_age": 0.2,
+        "future_tolerance": 0.05
+      }
+    },
+    {
+      "override": {
+        "arm_workspace_min": [
+          -1.0,
+          -2.0,
+          -3.0
+        ],
+        "arm_workspace_max": [
+          1.0,
+          2.0,
+          3.0
+        ]
+      },
+      "expected": {
+        "control_hz": 1000.0,
+        "translation_cutoff_hz": 5.0,
+        "rotation_cutoff_hz": 5.0,
+        "translation_deadband": 0.001,
+        "rotation_deadband": 0.008,
+        "max_translation_speed": 0.15,
+        "max_angular_speed": 0.5,
+        "max_translation_acceleration": 0.4,
+        "max_angular_acceleration": 1.5,
+        "max_translation_jerk": 2.5,
+        "max_angular_jerk": 8.0,
+        "max_target_translation_delta": 0.25,
+        "max_target_rotation_delta": 1.0,
+        "workspace_min": [
+          -1.0,
+          -2.0,
+          -3.0
+        ],
+        "workspace_max": [
+          1.0,
+          2.0,
+          3.0
+        ],
+        "hold_timeout": 0.15,
+        "stop_timeout": 0.6,
+        "max_source_age": 0.2,
+        "future_tolerance": 0.05
+      }
+    },
+    {
+      "override": {
+        "arm_tracking_timeout": 0.13,
+        "arm_stop_timeout": 0.65
+      },
+      "expected": {
+        "control_hz": 1000.0,
+        "translation_cutoff_hz": 5.0,
+        "rotation_cutoff_hz": 5.0,
+        "translation_deadband": 0.001,
+        "rotation_deadband": 0.008,
+        "max_translation_speed": 0.15,
+        "max_angular_speed": 0.5,
+        "max_translation_acceleration": 0.4,
+        "max_angular_acceleration": 1.5,
+        "max_translation_jerk": 2.5,
+        "max_angular_jerk": 8.0,
+        "max_target_translation_delta": 0.25,
+        "max_target_rotation_delta": 1.0,
+        "workspace_min": [
+          -1.2,
+          -1.2,
+          -1.2
+        ],
+        "workspace_max": [
+          1.2,
+          1.2,
+          1.2
+        ],
+        "hold_timeout": 0.13,
+        "stop_timeout": 0.65,
+        "max_source_age": 0.2,
+        "future_tolerance": 0.05
+      }
+    },
+    {
+      "override": {
+        "arm_max_angular_speed": 0.7,
+        "arm_max_target_translation_delta": 0.2
+      },
+      "expected": {
+        "control_hz": 1000.0,
+        "translation_cutoff_hz": 5.0,
+        "rotation_cutoff_hz": 5.0,
+        "translation_deadband": 0.001,
+        "rotation_deadband": 0.008,
+        "max_translation_speed": 0.15,
+        "max_angular_speed": 0.7,
+        "max_translation_acceleration": 0.4,
+        "max_angular_acceleration": 1.5,
+        "max_translation_jerk": 2.5,
+        "max_angular_jerk": 8.0,
+        "max_target_translation_delta": 0.2,
+        "max_target_rotation_delta": 1.0,
+        "workspace_min": [
+          -1.2,
+          -1.2,
+          -1.2
+        ],
+        "workspace_max": [
+          1.2,
+          1.2,
+          1.2
+        ],
+        "hold_timeout": 0.15,
+        "stop_timeout": 0.6,
+        "max_source_age": 0.2,
+        "future_tolerance": 0.05
+      }
+    },
+    {
+      "override": {
+        "arm_rotation_deadband": 0.009,
+        "arm_max_translation_jerk": 3.0
+      },
+      "expected": {
+        "control_hz": 1000.0,
+        "translation_cutoff_hz": 5.0,
+        "rotation_cutoff_hz": 5.0,
+        "translation_deadband": 0.001,
+        "rotation_deadband": 0.009,
+        "max_translation_speed": 0.15,
+        "max_angular_speed": 0.5,
+        "max_translation_acceleration": 0.4,
+        "max_angular_acceleration": 1.5,
+        "max_translation_jerk": 3.0,
+        "max_angular_jerk": 8.0,
+        "max_target_translation_delta": 0.25,
+        "max_target_rotation_delta": 1.0,
+        "workspace_min": [
+          -1.2,
+          -1.2,
+          -1.2
+        ],
+        "workspace_max": [
+          1.2,
+          1.2,
+          1.2
+        ],
+        "hold_timeout": 0.15,
+        "stop_timeout": 0.6,
+        "max_source_age": 0.2,
+        "future_tolerance": 0.05
+      }
+    }
+  ]
+}

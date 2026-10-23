@@ -1,0 +1,22 @@
+{
+  "width": 640,
+  "height": 480,
+  "fps": 30,
+  "color_format": "rgb8",
+  "color_auto_exposure": true,
+  "color_auto_exposure_priority": false,
+  "enable_depth": false,
+  "depth_format": "z16",
+  "cameras": [
+    {
+      "role": "wrist",
+      "model": "D435I",
+      "serial": "243522070004"
+    },
+    {
+      "role": "global",
+      "model": "D455",
+      "serial": "234322305920"
+    }
+  ]
+}

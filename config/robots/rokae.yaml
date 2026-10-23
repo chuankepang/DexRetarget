@@ -1,0 +1,183 @@
+# 单位除特别说明外：米、弧度、秒。请先阅读 docs/ik_config_audit.md。
+
+# 设备与通用启动默认值；加载任务时，home 会覆盖下述部分启动参数。
+robot:
+  # 设备型号；当前主机 Pinocchio 路线只支持此七轴型号。
+  type: xmate-er-pro-7
+  # 机器人控制器 IP；CLI 可覆盖。
+  ip: 192.168.0.160
+  # 本机机器人网口 IP；CLI 可覆盖。
+  local_ip: 192.168.0.100
+  # Hz；Python mock 调度/实时配置使用；原生真实回调固定 1 ms，改此值不能改变硬件周期。
+  control_hz: 1000
+  # SDK 实时丢包容忍设置，不是 Quest 跟踪超时。
+  rt_network_tolerance: 20
+  # 全部真实实时路线都传给 SDK 的限速开关；主机关节流还使用 model.stream 限制。
+  controller_rate_limit: true
+  # Hz；全部真实实时路线都调用 SDK setFilterLimit；主机关节参考另有 model.stream 滤波。
+  controller_filter_cutoff_hz: 30.0
+
+  # 2026-10-23 RobotAssist 两步辨识：用户确认包含全部末端组件。
+  # 阻抗启动前写入 SDK 负载并读回核对；适用于当前完整装配。
+  # 保留控制器当前 TCP/工件坐标与惯量；更换装配后必须重新辨识。
+  payload:
+    # true=阻抗启动时应用质量/重心；false=只核对 RobotAssist 当前选择。
+    apply_on_impedance_start: true
+    mass_kg: 0.93938639463
+    # 法兰坐标系，米；截图 mm 数值除以 1000，不能作为 TCP 平移使用。
+    cog_m: [-0.05271043598571, 0.01217669684527, 0.00860984186271]
+    # 截图 ix/iy/iz=0：未验证惯量，不等于物理惯量为零；不在此伪造惯量。
+
+  # 未加载任务的通用启动 / 05 工具默认；不是 Cup home 的第二配置源。
+  initial_joint_move:
+    # 通用启动回位开关；任务 home.on_start 覆盖，--skip-init 可跳过。
+    enabled: true
+    # joint_position: [0.0, 0.35, 0.0, 1.85, 0.0, -0.6292036732, 1.5707963268]
+    # rad，J1..J7；无任务时使用；有任务时由 home.arm_joints 覆盖。
+    joint_position: [+0.00000000, +0.35000000, +0.00000000, +1.85000000, +0.00000000, -0.62920367, +1.57079633]
+    # 归一化 SDK 设置：乘 1000 得 250，不是 rad/s；任务 home.joint_speed 覆盖。
+    joint_speed: 0.25
+    # NRT 在线速度倍率；任务启动和 h 也继承此值，非遥操作速度。
+    online_speed_scale: 0.50
+    # rad/段；启动分段规划上限；任务 home.max_segment_delta 覆盖。
+    max_segment_delta: 0.35
+    # 秒；每次初始化目标的超时；任务 home.timeout_s 覆盖。
+    timeout: 60.0
+    # rad；05 维护工具的近软限位判定，不是 IK 零空间参数。
+    recovery_trigger_margin: 0.15
+    # rad；05 旧 NRT 回退目标余量。软限位已关闭时应使用 06 手动 Jog。
+    recovery_clearance: 0.35
+    # SDK 整数设置；仅 05 --recover-joint-limits 旧 NRT 路线。
+    recovery_speed: 50
+    # 0.01..0.10；06 手动 Jog 速度比例，--jog-rate 可覆盖。
+    recovery_jog_rate: 0.05
+    # 秒；05 旧 NRT 回退超时，不控制 06 的等待使能超时。
+    recovery_timeout: 60.0
+    # rad；05 对目标姿态做的手册限位余量检查；不是运行时 IK 边界。
+    min_joint_limit_margin: 0.174533
+
+  # 旧独立演示预设：05 --pose manipulation、cup_flip、box_vertices 使用。正式 Cup 采集不读取。
+  manipulation_init:
+    # joint_position: [0.0, 0.4363323130, 0.0, 1.2217304764, 0.0, 1.4835298642, 0.0]
+    # rad；当前保留现场改值（与腕部向前姿态相同），不再声称工具朝下。演示有朝下检查，可能拒绝此姿态。
+    joint_position: [+0.00000000, +0.35000000, +0.00000000, +1.85000000, +0.00000000, -0.62920367, +1.57079633]
+
+  # 世界坐标 ← 机器人基座坐标的安装标定；不是 TCP 工具标定。
+  base_transform:
+    # [x,y,z,qx,qy,qz,qw]，米/无量纲；当前假设基座与世界重合。
+    pose_xyzw: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  # 检查控制器基座安装旋转是否为单位阵，适用于当前正装场景。
+  require_controller_base_rotation_identity: true
+  # rad；上述安装旋转检查阈值。
+  controller_base_rotation_tolerance: 0.02
+
+# 独立 NRT 工具默认参数；不改变 Quest 实时跟随。
+non_realtime:
+  # 独立 NRT 工具速度倍率；遥操作启动优先使用 initial_joint_move 的倍率。
+  online_speed_scale: 1.0
+  # SDK 整数速度设置；joint_move 等工具使用。
+  joint_speed: 300
+  # SDK 笛卡尔速度设置（mm/s）；cartesian_move 等工具使用。
+  cartesian_speed: 20
+  # 秒；独立 NRT 路径超时。
+  timeout: 60.0
+  # rad；独立关节小步工具允许的单次目标变化。
+  max_joint_delta: 0.25
+  # 米；独立 NRT 笛卡尔目标跳变限制。
+  max_translation_delta: 0.05
+  # rad；独立 NRT 笛卡尔姿态跳变限制。
+  max_rotation_delta: 0.20
+
+# 控制后端默认；任务 teleop.arm_control / CLI --arm-control 可覆盖。
+control:
+  # pinocchio=主机微分 IK+关节流；cartesian=控制器笛卡尔逆解。当前不是官方主机 IK。
+  mode: pinocchio
+  # position=位置控制；impedance=笛卡尔阻抗。只选控制类型，不指定任务 home。
+  controller: position
+  # 仅 impedance 路线生效；当前 position 不使用以下增益。
+  impedance:
+    # 原生 SDK 笛卡尔阻抗后端。
+    backend: sdk_cartesian
+    # 平移 N/m、旋转 Nm/rad；占位试验值，不是厂家推荐配方。
+    stiffness: [300.0, 300.0, 300.0, 15.0, 15.0, 15.0]
+    # 前三项 N、后三项 Nm；期望外力/力矩。
+    desired_wrench: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # 阻抗平衡点相对测量状态的距离约束。
+    reference_limit:
+      # 米；平移平衡点距离上限。
+      translation: 0.04
+      # rad；姿态平衡点角距离上限。
+      rotation: 0.30
+    # 仅离线 mock 弹簧模型质量，不发给控制器。
+    mock_mass: 1.0
+    # 仅离线 mock 阻尼，不发给控制器。
+    mock_damping: [80.0, 80.0, 80.0, 2.0, 2.0, 2.0]
+
+# Quest 相对映射，作用于全部臂控制后端。
+teleoperation:
+  # 相对位移缩放，1.0 倍；不是速度设置。
+  translation_scale: 1.0
+  # 相对旋转向量缩放，1.0 倍；不代表绝对姿态映射。
+  rotation_scale: 1.0
+  # 3x3 按行展开；Quest 相对运动轴到机器人/世界轴的正交旋转。
+  quest_to_robot_rotation:
+    [1.0, 0.0, 0.0,
+     0.0, 1.0, 0.0,
+     0.0, 0.0, 1.0]
+
+# 笛卡尔参考发生器参数。当前 Pinocchio 路线不使用其笛卡尔滤波/工作空间约束；关节限幅见模型。
+safety:
+  # Hz；笛卡尔路线平移低通。
+  translation_cutoff_hz: 5.0
+  # Hz；笛卡尔路线姿态低通。
+  rotation_cutoff_hz: 5.0
+  # 米；笛卡尔路线平移死区。
+  translation_deadband: 0.001
+  # rad；笛卡尔路线姿态死区。
+  rotation_deadband: 0.008
+  # m/s；笛卡尔路线速度限制。Pinocchio IK 同名限制在 config/models 中。
+  max_translation_speed: 0.15
+  # rad/s；笛卡尔路线角速度限制。Pinocchio IK 同名限制在 config/models 中。
+  max_angular_speed: 0.50
+  # m/s²；笛卡尔路线平移加速度限制。
+  max_translation_acceleration: 0.40
+  # rad/s²；笛卡尔路线角加速度限制。
+  max_angular_acceleration: 1.50
+  # m/s³；笛卡尔路线平移 jerk 限制。
+  max_translation_jerk: 2.5
+  # rad/s³；笛卡尔路线角 jerk 限制。
+  max_angular_jerk: 8.0
+  # 米；笛卡尔路线拒绝过大目标跳变。
+  max_target_translation_delta: 0.25
+  # rad；笛卡尔路线拒绝过大姿态跳变。
+  max_target_rotation_delta: 1.0
+  # 米；笛卡尔路线基座坐标 TCP 盒下界，当前仅为宽泛占位范围。
+  workspace_min: [-1.2, -1.2, -1.2]
+  # 米；笛卡尔路线基座坐标 TCP 盒上界，不是碰撞避障。
+  workspace_max: [1.2, 1.2, 1.2]
+  # 秒；全部路线的 Python 腕部过期门控；笛卡尔实时 hold；关节实时 hold 另在 model.stream。
+  hold_timeout: 0.15
+  # 秒；笛卡尔实时断流停止；Pinocchio 的对应参数在 model.stream。
+  stop_timeout: 0.60
+  # 秒；启动等待新鲜腕部及笛卡尔源时间检查；关节流另用 model.stream。
+  max_source_age: 0.20
+  # 秒；笛卡尔源时间允许的未来偏差；关节流另用 model.stream。
+  future_tolerance: 0.05
+
+# 仅 04_realtime_cartesian_test.py 的独立运动试验参数。
+realtime_test:
+  # 米；试验正弦位移幅值。
+  amplitude: 0.005
+  # Hz；试验正弦频率。
+  frequency: 0.10
+  # 秒；试验持续时间。
+  duration: 5.0
+  # Hz；Python 试验目标发布频率，不是 1 kHz 伺服周期。
+  update_hz: 100.0
+  # 试验平移轴 x/y/z。
+  axis: x
+
+# 仅模拟后端起始状态。
+mock:
+  # Cartesian/impedance mock 起始 TCP；Pinocchio mock 从启动关节角做 FK。
+  initial_pose_xyzw: [0.45, 0.0, 0.35, 0.0, 0.0, 0.0, 1.0]

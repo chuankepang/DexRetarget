@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -25,3 +26,16 @@ MUJOCO_LOG.TXT
 assets/sharpa-urdf-usd-xml-main.zip
 assets/sharpa-urdf-usd-xml-main/
 *.bak-*
+
+# Camera captures and generated measurements (keep documentation tracked).
+data/camera_tests/
+data/raw/
+data/lerobot/
+data/calibration/
+
+# Local credentials and downloaded SDK archives (keep SDK source and runtime).
+.env
+.env.*
+!.env.example
+.github-auth/
+rokae/third_party/official_sdk_audit/*.zip

@@ -255,6 +255,7 @@ class ArmCommand:
     status: str
     vr_pose: np.ndarray
     vr_relative: np.ndarray
+    mapped_relative: np.ndarray
     world_target: np.ndarray
     base_target_raw: np.ndarray
     base_target_safe: np.ndarray
@@ -306,6 +307,7 @@ class ArmTeleopController:
                 command.status,
                 command.vr_pose.copy(),
                 command.vr_relative.copy(),
+                command.mapped_relative.copy(),
                 command.world_target.copy(),
                 command.base_target_raw.copy(),
                 command.base_target_safe.copy(),
@@ -333,6 +335,7 @@ class ArmTeleopController:
                 status=self._status,
                 vr_pose=vr_ref,
                 vr_relative=mapping.vr_relative,
+                mapped_relative=mapping.mapped_relative,
                 world_target=mapping.world_target,
                 base_target_raw=base_ref,
                 base_target_safe=base_ref,
@@ -401,6 +404,7 @@ class ArmTeleopController:
                 status=self._status,
                 vr_pose=vr_pose,
                 vr_relative=mapping.vr_relative,
+                mapped_relative=mapping.mapped_relative,
                 world_target=mapping.world_target,
                 base_target_raw=mapping.base_target,
                 base_target_safe=safe_target,
@@ -431,6 +435,7 @@ class ArmTeleopController:
             status=self._status,
             vr_pose=validate_transform(vr_pose, "hold VR pose"),
             vr_relative=previous.vr_relative.copy(),
+            mapped_relative=previous.mapped_relative.copy(),
             world_target=previous.world_target.copy(),
             base_target_raw=previous.base_target_raw.copy(),
             base_target_safe=previous.base_target_safe.copy(),

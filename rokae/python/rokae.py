@@ -8,15 +8,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Sequence
+import importlib
+import platform
+import sys
 
 import numpy as np
 
 try:
-    from . import _rokae_cpp
+    _rokae_cpp = importlib.import_module(__package__ + "._rokae_cpp")
 except ImportError as exc:  # pragma: no cover - exercised by a missing-build install
     raise ImportError(
-        "ROKAE C++ bridge is not built. Run `bash rokae/build.sh` from the "
-        "DexRetarget repository root."
+        f"Cannot load the ROKAE C++ bridge for Python {sys.version_info.major}.{sys.version_info.minor} "
+        f"on {platform.machine()}: {exc}. Activate dexteleop and run `bash rokae/build.sh` "
+        "with the matching SDK runtime from the repository root."
     ) from exc
 
 
@@ -70,6 +74,35 @@ class Rokae:
     def calculate_fk(self, joints: Sequence[float]) -> np.ndarray:
         return np.asarray(self._driver.calculate_fk(list(joints)), dtype=np.float64)
 
+    def get_soft_limits(self) -> tuple[bool, np.ndarray]:
+        enabled, limits = self._driver.get_soft_limits()
+        return bool(enabled), np.asarray(limits, dtype=np.float64)
+
+    def recover_disabled_soft_limits(
+        self, expected_joints: Sequence[float], expected_limits: Sequence[Sequence[float]],
+        *, clearance_degrees: float = 0.5,
+        request_power_on: bool = False,
+        jog_rate: float = 0.05,
+    ) -> None:
+        self._driver.recover_disabled_soft_limits(
+            list(expected_joints), [list(pair) for pair in expected_limits],
+            float(clearance_degrees), bool(request_power_on), float(jog_rate),
+        )
+
+    def get_controller_logs(self, count: int = 10) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._driver.get_controller_logs(count)]
+
+    def recover_from_joint_limits(
+        self,
+        target: Sequence[float],
+        speed: int = 20,
+        timeout: float = 60.0,
+        max_joint_delta: float = 0.5,
+    ) -> None:
+        self._driver.recover_from_joint_limits(
+            list(target), speed, timeout, max_joint_delta
+        )
+
     def move_joint(
         self,
         target: Sequence[float],
@@ -115,6 +148,12 @@ class Rokae:
     def start_realtime_cartesian(self, power_on: bool = True) -> None:
         self._driver.start_realtime_cartesian(power_on)
 
+    def start_realtime_cartesian_impedance(self, power_on: bool = True) -> None:
+        self._driver.start_realtime_cartesian_impedance(power_on)
+
+    def start_realtime_joint(self, config: Any, power_on: bool = True) -> None:
+        self._driver.start_realtime_joint(config, power_on)
+
     def set_target_pose(
         self, target: np.ndarray, source_timestamp: float, sequence: int
     ) -> bool:
@@ -123,6 +162,16 @@ class Rokae:
                 np.asarray(target, dtype=np.float64), source_timestamp, sequence
             )
         )
+
+    def set_target_joints(
+        self, joints: Sequence[float], source_timestamp: float, sequence: int
+    ) -> bool:
+        return bool(
+            self._driver.set_target_joints(list(joints), source_timestamp, sequence)
+        )
+
+    def get_command_joints(self) -> np.ndarray:
+        return np.asarray(self._driver.get_command_joints(), dtype=np.float64)
 
     def get_command_pose(self) -> np.ndarray:
         return np.asarray(self._driver.get_command_pose(), dtype=np.float64)

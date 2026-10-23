@@ -1,0 +1,10 @@
+# Dataset I/O subset for the OpenPI-pinned LeRobot revision; not policy trainers.
+datasets==3.6.0
+huggingface-hub>=0.30,<1
+draccus==0.10.0
+jsonlines>=4,<5
+einops>=0.8,<1
+av==14.2.0
+imageio>=2.34,<3
+termcolor>=2.4,<4
+deepdiff>=7,<9

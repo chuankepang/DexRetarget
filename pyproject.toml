@@ -28,10 +28,20 @@ dependencies = [
     "pyyaml",
 ]
 
+[project.scripts]
+dexretarget = "dexretarget.app.cli:entrypoint"
+
+[project.optional-dependencies]
+collection = ["h5py>=3.10,<4"]
+
 [project.urls]
 Homepage = "https://github.com/qqsq12321/AnyDexRetarget"
 Repository = "https://github.com/qqsq12321/AnyDexRetarget"
 Issues = "https://github.com/qqsq12321/AnyDexRetarget/issues"
 
 [tool.setuptools]
-packages = ["anydexretarget", "anydexretarget.optimizer", "anydexretarget.teleop"]
+packages = ["anydexretarget", "anydexretarget.optimizer", "anydexretarget.teleop", "dexretarget", "dexretarget.app", "dexretarget.teleop", "dexretarget.teleop.devices", "dexretarget.camera", "dexretarget.dataset", "dexretarget.policy"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

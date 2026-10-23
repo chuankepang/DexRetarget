@@ -1,0 +1,17 @@
+{
+  "provenance": "Generated from pre-refactor baseline.zip deterministic fixture, 2026-10-22. Includes HDF5 values/names/dtypes/shapes/units and normalized metadata.",
+  "cases": {
+    "plain": {
+      "datasets": 74,
+      "sha256": "1bb6581ca8fc53497b4fc835c730e7101a30dcf06f9f96451aceaa2a21713a64"
+    },
+    "paused": {
+      "datasets": 74,
+      "sha256": "e70938a7fa3a8c60923b9a5defedb8e7be62f830bf034ef695d1a9fa64171531"
+    },
+    "stale": {
+      "datasets": 74,
+      "sha256": "512539de624a95275ad9f57fc848c56307c29a3a3e3539f1f78fe6fa9c71e183"
+    }
+  }
+}

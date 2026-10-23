@@ -139,6 +139,62 @@ std::string to_string(rokae::OperationState state) {
 
 }  // namespace
 
+std::vector<double> plan_disabled_soft_limit_recovery(
+    const std::vector<double>& joints,
+    const std::vector<std::array<double, 2>>& limits, double clearance_degrees) {
+  if (joints.empty() || joints.size() != limits.size()) {
+    throw std::invalid_argument("recovery joints/limits have incompatible sizes");
+  }
+  auto target = joints;
+  unsigned affected = 0;
+  if (!std::isfinite(clearance_degrees) || clearance_degrees < 0.5 || clearance_degrees > 10.0) {
+    throw std::invalid_argument("recovery clearance must be 0.5..10 degrees");
+  }
+  const double clearance = clearance_degrees * kPi / 180.0;
+  constexpr double max_outside = kPi / 180.0;
+  for (std::size_t i = 0; i < joints.size(); ++i) {
+    const double q = joints[i], lo = limits[i][0], hi = limits[i][1];
+    if (!std::isfinite(q) || !std::isfinite(lo) || !std::isfinite(hi) ||
+        hi - lo <= 2 * clearance) {
+      throw std::invalid_argument("invalid recovery joints/soft limits");
+    }
+    if (q <= lo || q >= hi) {
+      if (++affected > 1) {
+        throw std::invalid_argument("recovery supports only one out-of-range joint");
+      }
+      if (q < lo - max_outside || q > hi + max_outside) {
+        throw std::invalid_argument("joint exceeds soft limit by more than 1 degree");
+      }
+      target[i] = q <= lo ? lo + clearance : hi - clearance;
+    }
+  }
+  return target;
+}
+
+void RealtimeConfig::validate_impedance_load(
+    double mass, const std::array<double, 3>& cog,
+    const std::array<double, 3>& inertia) const {
+  validate();
+  if (!std::isfinite(mass) || mass <= 0.0) {
+    throw std::runtime_error("impedance refused before power-on: active controller load mass must be positive; save and select the calibrated RobotAssist tool");
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    if (!std::isfinite(cog[axis]) || !std::isfinite(inertia[axis]) || inertia[axis] < 0.0) {
+      throw std::runtime_error("impedance refused before power-on: invalid controller load cog/inertia");
+    }
+  }
+  // Allow displayed-value rounding (5 g, 1 mm per axis), not a second calibration.
+  if (expected_load_mass > 0.0) {
+    bool matches = std::abs(mass - expected_load_mass) <= 0.005;
+    for (int axis = 0; axis < 3; ++axis) {
+      matches = matches && std::abs(cog[axis] - expected_load_cog[axis]) <= 0.001;
+    }
+    if (!matches) {
+      throw std::runtime_error("impedance refused before power-on: active controller load differs from robot.payload; save/select the calibrated tool in RobotAssist (cog is metres, not millimetres)");
+    }
+  }
+}
+
 void RealtimeConfig::validate() const {
   const double positives[] = {
       translation_cutoff_hz, rotation_cutoff_hz, max_translation_speed,
@@ -167,6 +223,41 @@ void RealtimeConfig::validate() const {
   if (rt_network_tolerance > 100) {
     throw std::invalid_argument("rt_network_tolerance must be in [0, 100]");
   }
+  if (!std::isfinite(expected_load_mass) || expected_load_mass < 0.0) {
+    throw std::invalid_argument("expected_load_mass must be finite and non-negative");
+  }
+  if (apply_load_on_impedance_start && expected_load_mass <= 0.0) {
+    throw std::invalid_argument("applying impedance load requires a positive calibrated mass");
+  }
+  for (double value : expected_load_cog) {
+    if (!std::isfinite(value)) throw std::invalid_argument("expected_load_cog must be finite");
+  }
+  constexpr double kMaxStiffnessTranslation = 1500.0;
+  constexpr double kMaxStiffnessRotation = 100.0;
+  constexpr double kMaxWrenchForce = 60.0;
+  constexpr double kMaxWrenchTorque = 30.0;
+  for (int axis = 0; axis < 6; ++axis) {
+    const double stiffness = cartesian_stiffness[static_cast<std::size_t>(axis)];
+    const double maximum = axis < 3 ? kMaxStiffnessTranslation : kMaxStiffnessRotation;
+    if (!std::isfinite(stiffness) || stiffness < 0.0 || stiffness > maximum) {
+      throw std::invalid_argument(
+          "cartesian stiffness must be within the xCoreSDK 0.3.4 cobot maxima");
+    }
+    const double wrench = cartesian_desired_wrench[static_cast<std::size_t>(axis)];
+    const double wrench_limit = axis < 3 ? kMaxWrenchForce : kMaxWrenchTorque;
+    if (!std::isfinite(wrench) || std::abs(wrench) > wrench_limit) {
+      throw std::invalid_argument(
+          "cartesian impedance wrench exceeds the xCoreSDK 0.3.4 range");
+    }
+  }
+  if (!std::isfinite(max_equilibrium_translation_error) ||
+      max_equilibrium_translation_error <= 0.0 ||
+      !std::isfinite(max_equilibrium_rotation_error) ||
+      max_equilibrium_rotation_error <= 0.0 ||
+      max_equilibrium_rotation_error > kPi) {
+    throw std::invalid_argument(
+        "equilibrium error limits must be finite, translation > 0, rotation in (0, pi]");
+  }
   for (int axis = 0; axis < 3; ++axis) {
     if (!std::isfinite(workspace_min[axis]) ||
         !std::isfinite(workspace_max[axis]) ||
@@ -174,6 +265,36 @@ void RealtimeConfig::validate() const {
       throw std::invalid_argument("workspace bounds must be finite and ordered");
     }
   }
+}
+
+Pose limit_equilibrium_pose(const Pose& desired, const Pose& measured,
+                            double max_translation_error,
+                            double max_rotation_error) {
+  validate_pose(desired, "equilibrium pose");
+  validate_pose(measured, "measured pose");
+  if (!std::isfinite(max_translation_error) || max_translation_error <= 0.0 ||
+      !std::isfinite(max_rotation_error) || max_rotation_error <= 0.0 ||
+      max_rotation_error > kPi) {
+    throw std::invalid_argument(
+        "equilibrium error limits must be finite, translation > 0, rotation in (0, pi]");
+  }
+  const Eigen::Matrix4d desired_matrix = pose_matrix(desired);
+  const Eigen::Matrix4d measured_matrix = pose_matrix(measured);
+  const Eigen::Vector3d translation = limited_norm(
+      desired_matrix.topRightCorner<3, 1>() -
+          measured_matrix.topRightCorner<3, 1>(),
+      max_translation_error);
+  const Eigen::Matrix3d relative =
+      measured_matrix.topLeftCorner<3, 3>().transpose() *
+      desired_matrix.topLeftCorner<3, 3>();
+  const Eigen::Vector3d rotation =
+      limited_norm(rotation_vector(relative), max_rotation_error);
+  Eigen::Matrix4d limited = Eigen::Matrix4d::Identity();
+  limited.topLeftCorner<3, 3>() =
+      measured_matrix.topLeftCorner<3, 3>() * rotation_from_vector(rotation);
+  limited.topRightCorner<3, 1>() =
+      measured_matrix.topRightCorner<3, 1>() + translation;
+  return pose_array(limited);
 }
 
 class RealtimeCore::Impl {
@@ -487,11 +608,22 @@ class SessionBase {
   virtual Pose tcp_pose() = 0;
   virtual Pose base_frame() = 0;
   virtual Pose calculate_fk(const std::vector<double>&) = 0;
+  virtual std::pair<bool, std::vector<std::array<double, 2>>> soft_limits() = 0;
+  virtual std::vector<ControllerLog> controller_logs(unsigned, bool) = 0;
   virtual Pose preview_nrt_cartesian_target(const Pose&) = 0;
   virtual void move_joint(const std::vector<double>&, int, double, double, bool) = 0;
+  virtual void recover_from_joint_limits(const std::vector<double>&, int,
+                                         double, double) = 0;
+  virtual void recover_disabled_soft_limits(
+      const std::vector<double>&, const std::vector<std::array<double, 2>>&,
+      double, bool, double, const std::function<void()>&) = 0;
   virtual void move_cartesian(const Pose&, int, double, double, double, bool) = 0;
   virtual void start_realtime(bool) = 0;
+  virtual void start_realtime_impedance(bool) = 0;
+  virtual void start_realtime_joint(const JointRealtimeConfig&, bool) = 0;
   virtual bool set_target(const Pose&, double, std::int64_t) = 0;
+  virtual bool set_target_joints(const std::vector<double>&, double, std::int64_t) = 0;
+  virtual std::vector<double> command_joints() const = 0;
   virtual void hold() = 0;
   virtual void stop_realtime() = 0;
   virtual void stop() = 0;
@@ -577,8 +709,8 @@ class Session final : public SessionBase {
   Pose tcp_pose() override {
     require_connected();
     if (realtime_) {
-      const auto measured = std::atomic_load(&measured_pose_);
-      if (measured) return *measured;
+      Pose measured{};
+      if (load_measured_pose(measured)) return measured;
     }
     // tcpPose_m is explicitly documented by SDK 0.3.4 as the end pose
     // relative to the robot base. endInRef is not equivalent when a non-base
@@ -635,6 +767,34 @@ class Session final : public SessionBase {
         result.trans[0], result.trans[1], result.trans[2],
         result.rpy[0], result.rpy[1], result.rpy[2]}};
     return pose_from_posture(xyz_rpy);
+  }
+
+  std::pair<bool, std::vector<std::array<double, 2>>> soft_limits() override {
+    require_connected();
+    std::array<double[2], DoF> raw{};
+    std::error_code ec;
+    const bool enabled = robot_->getSoftLimit(raw, ec);
+    check_ec(ec, "getSoftLimit");
+    std::vector<std::array<double, 2>> limits;
+    limits.reserve(DoF);
+    for (std::size_t i = 0; i < DoF; ++i) {
+      limits.push_back({raw[i][0], raw[i][1]});
+    }
+    return {enabled, limits};
+  }
+
+  std::vector<ControllerLog> controller_logs(unsigned count, bool faults_only) override {
+    if (count < 1 || count > 10) throw std::invalid_argument("controller log count must be 1..10");
+    require_connected();
+    std::error_code ec;
+    const std::set<rokae::LogInfo::Level> levels = faults_only
+        ? std::set<rokae::LogInfo::Level>{rokae::LogInfo::warning, rokae::LogInfo::error}
+        : std::set<rokae::LogInfo::Level>{};
+    const auto logs = robot_->queryControllerLog(count, levels, ec);
+    check_ec(ec, "queryControllerLog");
+    std::vector<ControllerLog> result;
+    for (const auto& log : logs) result.push_back({log.id, log.timestamp, log.content, log.repair});
+    return result;
   }
 
   void prepare_motion(bool power_on, rokae::MotionControlMode mode) {
@@ -735,6 +895,316 @@ class Session final : public SessionBase {
     robot_->moveReset(ec); check_ec(ec, "moveReset(after MoveAbsJ)");
   }
 
+  void recover_disabled_soft_limits(
+      const std::vector<double>& expected_joints,
+      const std::vector<std::array<double, 2>>& expected_limits,
+      double clearance_degrees,
+      bool request_power_on,
+      double jog_rate,
+      const std::function<void()>& check_cancel) override {
+    if (!std::isfinite(jog_rate) || jog_rate < 0.01 || jog_rate > 0.10) {
+      throw std::invalid_argument("recovery jog_rate must be in 0.01..0.10");
+    }
+    require_connected();
+    if (realtime_ || expected_joints.size() != DoF || expected_limits.size() != DoF) {
+      throw std::invalid_argument("maintenance recovery requires matching DOF and no realtime control");
+    }
+    // Validate the operator-reviewed snapshot before changing any controller state.
+    const auto target = plan_disabled_soft_limit_recovery(expected_joints, expected_limits, clearance_degrees);
+    const auto before = joints();
+    const auto saved = soft_limits();
+    if (saved.first || saved.second != expected_limits) {
+      throw std::runtime_error("soft-limit state changed since review; re-run inspection");
+    }
+    constexpr double tolerance = 0.05 * kPi / 180.0;
+    for (std::size_t i = 0; i < DoF; ++i) {
+      if (!std::isfinite(before[i]) || std::abs(before[i] - expected_joints[i]) > tolerance) {
+        throw std::runtime_error("joint position changed since review; re-run inspection");
+      }
+    }
+    const auto initial = state();
+    if (initial.operation_state != "idle") {
+      throw std::runtime_error("maintenance recovery requires an idle controller");
+    }
+    auto cancel = [&]() { if (check_cancel) check_cancel(); };
+    auto power_off_manual = [&]() {
+      std::error_code ec;
+      robot_->stop(ec); check_ec(ec, "stop(recovery)");
+      const auto before_off = robot_->powerState(ec); check_ec(ec, "powerState(before recovery off)");
+      if (!request_power_on && before_off == rokae::PowerState::on) {
+        std::cout << "[ROKAE] Jog stopped. Release the physical manual enable now; "
+                     "waiting for power=off before restoring limits (10 s)." << std::endl;
+      }
+      robot_->setPowerState(false, ec); check_ec(ec, "power off(recovery)");
+      const auto deadline = Clock::now() + std::chrono::seconds(10);
+      for (;;) {
+        const auto power = robot_->powerState(ec); check_ec(ec, "powerState(recovery)");
+        if (power == rokae::PowerState::off) break;
+        if (Clock::now() >= deadline) throw std::runtime_error("recovery power-off timeout");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+      robot_->setOperateMode(rokae::OperateMode::manual, ec);
+      check_ec(ec, "setOperateMode(manual recovery)");
+      const auto mode = robot_->operateMode(ec); check_ec(ec, "operateMode(recovery)");
+      if (mode != rokae::OperateMode::manual) throw std::runtime_error("manual mode not accepted");
+    };
+
+    std::exception_ptr motion_error;
+    bool jog_requested = false;
+    try {
+      cancel();
+      power_off_manual();
+      // Re-read after mode/power transitions. No stale position may become a jog.
+      const auto start = joints();
+      const auto current_limits = soft_limits();
+      if (current_limits.first || current_limits.second != expected_limits) {
+        throw std::runtime_error("soft-limit state changed before jog");
+      }
+      unsigned axis = DoF;
+      for (std::size_t i = 0; i < DoF; ++i) {
+        if (!std::isfinite(start[i]) || std::abs(start[i] - expected_joints[i]) > tolerance) {
+          throw std::runtime_error("joint moved before jog; re-run inspection");
+        }
+        if (target[i] != expected_joints[i]) axis = static_cast<unsigned>(i);
+      }
+      if (axis != DoF) {
+        cancel();
+        std::error_code ec;
+        if (request_power_on) {
+          // SDK 0.3.4: manual power-on is supported ONLY without an external
+          // enabling device/teach pendant. Never fall back to automatic mode.
+          robot_->setPowerState(true, ec);
+          if (ec) {
+            throw std::runtime_error("power on(manual recovery): " + ec.message() +
+                " [" + ec.category().name() + ":" + std::to_string(ec.value()) +
+                "]. SDK manual power-on requires no external enable/teach pendant; "
+                "use --manual-power-source operator when one is connected");
+          }
+        } else {
+          std::cout << "[ROKAE] WAITING FOR MANUAL ENABLE (30 s): press and hold the "
+                       "physical three-position enable at its middle position. "
+                       "The reviewed single-axis Jog starts when power=on; keep "
+                       "holding until the release prompt. No SDK power-on request is sent."
+                    << std::endl;
+        }
+        const auto power_deadline = Clock::now() + std::chrono::seconds(30);
+        for (;;) {
+          cancel();
+          const auto power = robot_->powerState(ec); check_ec(ec, "powerState(manual recovery)");
+          if (power == rokae::PowerState::on) break;
+          if (power == rokae::PowerState::estop || power == rokae::PowerState::gstop ||
+              Clock::now() >= power_deadline) {
+            throw std::runtime_error("manual power-on not observed; check physical enable/safety state. "
+                                     "No recovery Jog command was sent");
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        const auto powered_joints = joints();
+        const auto powered_limits = soft_limits();
+        const auto powered_mode = robot_->operateMode(ec);
+        check_ec(ec, "operateMode(before recovery jog)");
+        if (powered_mode != rokae::OperateMode::manual || powered_limits.first ||
+            powered_limits.second != expected_limits) {
+          throw std::runtime_error("manual mode or soft-limit state changed during power-on");
+        }
+        for (std::size_t i = 0; i < DoF; ++i) {
+          if (!std::isfinite(powered_joints[i]) || std::abs(powered_joints[i] - start[i]) > tolerance) {
+            throw std::runtime_error("joint moved during power-on; refusing recovery jog");
+          }
+        }
+        cancel();
+        // Step is in degrees, joint index is zero based. No automatic mode,
+        // MoveAbsJ, safety reset or disabling/widening any limit is used here.
+        const double delta = target[axis] - start[axis];
+        jog_requested = true;
+        robot_->startJog(rokae::JogOpt::jointSpace, jog_rate,
+                         std::abs(delta) * 180.0 / kPi, axis, delta > 0, ec);
+        check_ec(ec, "startJog(single-axis recovery)");
+        const auto deadline = Clock::now() + std::chrono::seconds(30);
+        for (;;) {
+          cancel();
+          const auto actual = joints();
+          for (std::size_t i = 0; i < DoF; ++i) {
+            const double lower = std::min(start[i], target[i]) - tolerance;
+            const double upper = std::max(start[i], target[i]) + tolerance;
+            if (!std::isfinite(actual[i]) || actual[i] < lower || actual[i] > upper) {
+              throw std::runtime_error("unexpected joint movement during recovery");
+            }
+          }
+          const auto mode = robot_->operateMode(ec); check_ec(ec, "operateMode(jog)");
+          const auto power = robot_->powerState(ec); check_ec(ec, "powerState(jog)");
+          if (mode != rokae::OperateMode::manual || power != rokae::PowerState::on) {
+            throw std::runtime_error("manual enable/power lost during recovery");
+          }
+          if (std::abs(actual[axis] - target[axis]) <= tolerance) break;
+          if (Clock::now() >= deadline) throw std::runtime_error("single-axis jog recovery timed out");
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+      }
+    } catch (...) {
+      motion_error = std::current_exception();
+    }
+
+    // Always stop Jog (SDK requirement) and request power-off, including on
+    // signal, timeout or startJog failure. Never report success until read-back.
+    try {
+      power_off_manual();
+      const auto final_q = joints();
+      const auto final_limits = soft_limits();
+      if (final_limits.second != expected_limits) {
+        throw std::runtime_error("controller limits changed; will not overwrite them");
+      }
+      for (std::size_t i = 0; i < DoF; ++i) {
+        if (!std::isfinite(final_q[i]) || final_q[i] <= expected_limits[i][0] ||
+            final_q[i] >= expected_limits[i][1]) {
+          throw std::runtime_error("joint remains outside limits; cannot re-enable them");
+        }
+      }
+      std::error_code ec;
+      // Default limits argument means enable existing values, never rewrite.
+      robot_->setSoftLimit(true, ec); check_ec(ec, "setSoftLimit(true recovery)");
+      const auto restored = soft_limits();
+      if (!restored.first || restored.second != expected_limits) {
+        throw std::runtime_error("original soft limits were not restored");
+      }
+      const auto final_power = robot_->powerState(ec); check_ec(ec, "powerState(after recovery)");
+      const auto final_mode = robot_->operateMode(ec); check_ec(ec, "operateMode(after recovery)");
+      if (final_power != rokae::PowerState::off || final_mode != rokae::OperateMode::manual) {
+        throw std::runtime_error("final power-off/manual state not confirmed");
+      }
+    } catch (const std::exception& error) {
+      // Even if stop/manual transition failed, make one separate power-off
+      // request. A network failure can prevent confirmation; report explicitly.
+      std::error_code off_ec;
+      robot_->setPowerState(false, off_ec);
+      std::string original;
+      if (motion_error) {
+        try { std::rethrow_exception(motion_error); }
+        catch (const std::exception& exc) { original = std::string("; initial error: ") + exc.what(); }
+        catch (...) { original = "; initial recovery interrupted"; }
+      }
+      off_ec.clear();
+      const auto final_power = robot_->powerState(off_ec);
+      const bool off_confirmed = !off_ec && final_power == rokae::PowerState::off;
+      throw std::runtime_error(std::string("RECOVERY INCOMPLETE") + original +
+          "; cleanup: " + error.what() + (jog_requested ? "; Jog was requested" : "; no Jog command sent") +
+          (off_confirmed ? "; power=off read back" : "; power-off not confirmed") +
+          "; soft-limit restoration not confirmed");
+    }
+    std::cout << "[ROKAE] original soft limits enabled and verified; powered off in manual mode."
+              << std::endl;
+    if (motion_error) std::rethrow_exception(motion_error);
+  }
+
+  void recover_from_joint_limits(const std::vector<double>& target, int speed,
+                                 double timeout, double max_delta) override {
+    if (target.size() != DoF) {
+      throw std::invalid_argument("joint-limit recovery target has wrong length");
+    }
+    if (realtime_) {
+      throw std::runtime_error("joint-limit recovery cannot run during realtime control");
+    }
+    const auto before = joints();
+    std::array<double[2], DoF> raw_limits{};
+    std::error_code ec;
+    const bool limits_enabled = robot_->getSoftLimit(raw_limits, ec);
+    check_ec(ec, "getSoftLimit(recovery)");
+    if (!limits_enabled) {
+      throw std::runtime_error(
+          "controller soft limits are already disabled; refusing automatic "
+          "init recovery. Inspect with python rokae/examples/06_recover_soft_limits.py first");
+    }
+    for (std::size_t i = 0; i < DoF; ++i) {
+      if (!std::isfinite(target[i])) {
+        throw std::invalid_argument("joint-limit recovery target is non-finite");
+      }
+      if (!(target[i] > raw_limits[i][0] && target[i] < raw_limits[i][1])) {
+        throw std::invalid_argument(
+            "joint-limit recovery target J" + std::to_string(i + 1) +
+            " is not strictly inside the saved soft limits");
+      }
+      const bool near_lower = before[i] <= raw_limits[i][0] + 0.15;
+      const bool near_upper = before[i] >= raw_limits[i][1] - 0.15;
+      if (near_lower && target[i] <= before[i]) {
+        throw std::invalid_argument("recovery J" + std::to_string(i + 1) +
+                                    " does not move inward from its lower limit");
+      }
+      if (near_upper && target[i] >= before[i]) {
+        throw std::invalid_argument("recovery J" + std::to_string(i + 1) +
+                                    " does not move inward from its upper limit");
+      }
+      if (!near_lower && !near_upper && std::abs(target[i] - before[i]) > 1e-4) {
+        throw std::invalid_argument(
+            "recovery may move only joints near a configured soft limit");
+      }
+    }
+
+    auto set_manual_power_off = [&]() {
+      std::error_code state_ec;
+      robot_->stop(state_ec);
+      state_ec.clear();
+      robot_->moveReset(state_ec);
+      state_ec.clear();
+      robot_->setPowerState(false, state_ec);
+      check_ec(state_ec, "setPowerState(false) for soft-limit recovery");
+      const auto deadline = Clock::now() + std::chrono::seconds(10);
+      while (Clock::now() < deadline) {
+        const auto power = robot_->powerState(state_ec);
+        check_ec(state_ec, "powerState(recovery power-off)");
+        if (power == rokae::PowerState::off) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      if (robot_->powerState(state_ec) != rokae::PowerState::off) {
+        check_ec(state_ec, "powerState(recovery final)");
+        throw std::runtime_error("robot did not power off for soft-limit recovery");
+      }
+      robot_->setOperateMode(rokae::OperateMode::manual, state_ec);
+      check_ec(state_ec, "setOperateMode(manual) for soft-limit recovery");
+    };
+
+    std::cout << "[ROKAE] RECOVERY: powering off and entering manual mode ..." << std::endl;
+    set_manual_power_off();
+    robot_->setSoftLimit(false, ec);
+    check_ec(ec, "setSoftLimit(false)");
+    std::cout << "[ROKAE] RECOVERY: soft limits temporarily disabled; moving only "
+                 "the near-limit axis/axes inward ..." << std::endl;
+
+    std::exception_ptr motion_error;
+    try {
+      move_joint(target, speed, timeout, max_delta, true);
+    } catch (...) {
+      motion_error = std::current_exception();
+    }
+
+    std::exception_ptr restore_error;
+    try {
+      std::cout << "[ROKAE] RECOVERY: powering off before restoring soft limits ..."
+                << std::endl;
+      set_manual_power_off();
+      ec.clear();
+      robot_->setSoftLimit(true, ec, raw_limits);
+      check_ec(ec, "setSoftLimit(true, saved limits)");
+      std::array<double[2], DoF> verified{};
+      const bool restored = robot_->getSoftLimit(verified, ec);
+      check_ec(ec, "getSoftLimit(verify recovery restore)");
+      if (!restored) throw std::runtime_error("soft limits remained disabled");
+      std::cout << "[ROKAE] RECOVERY: original soft limits restored; robot remains "
+                   "powered off in manual mode." << std::endl;
+    } catch (...) {
+      restore_error = std::current_exception();
+    }
+    if (restore_error) {
+      try {
+        std::rethrow_exception(restore_error);
+      } catch (const std::exception& error) {
+        throw std::runtime_error(
+            std::string("CRITICAL: failed to restore controller soft limits: ") +
+            error.what() + ". Keep the cell stopped and restore limits in Robot Assist");
+      }
+    }
+    if (motion_error) std::rethrow_exception(motion_error);
+  }
+
   void move_cartesian(const Pose& target, int speed, double timeout,
                       double max_translation_delta, double max_rotation_delta,
                       bool power_on) override {
@@ -820,11 +1290,62 @@ class Session final : public SessionBase {
   }
 
   void start_realtime(bool power_on) override {
-    if (realtime_) return;
+    start_cartesian_realtime(power_on, false);
+  }
+
+  void start_realtime_impedance(bool power_on) override {
+    start_cartesian_realtime(power_on, true);
+  }
+
+  void start_cartesian_realtime(bool power_on, bool impedance) {
+    if (realtime_) {
+      if (joint_realtime_) {
+        throw std::runtime_error("realtime joint control is already running");
+      }
+      if (cartesian_impedance_ != impedance) {
+        throw std::runtime_error(
+            "refusing to hot-switch Cartesian position and impedance; stop realtime first");
+      }
+      return;
+    }
     (void)tcp_pose();  // Validate that a controller TCP is available before mode switch.
     std::error_code ec;
-    const auto active_toolset = robot_->toolset(ec);
+    auto active_toolset = robot_->toolset(ec);
     check_ec(ec, "toolset");
+    if (impedance && config_.apply_load_on_impedance_start) {
+      // SDK Toolset is separate from the saved RL tool. Copy before editing:
+      // never replace TCP/ref with identity or invent rotational inertia.
+      auto requested = active_toolset;
+      requested.load.mass = config_.expected_load_mass;
+      requested.load.cog = config_.expected_load_cog;
+      config_.validate_impedance_load(requested.load.mass, requested.load.cog,
+                                     requested.load.inertia);
+      robot_->setToolset(requested, ec);
+      check_ec(ec, "setToolset(calibrated impedance payload)");
+      active_toolset = robot_->toolset(ec);
+      check_ec(ec, "toolset(readback calibrated payload)");
+      config_.validate_impedance_load(active_toolset.load.mass,
+                                     active_toolset.load.cog,
+                                     active_toolset.load.inertia);
+      const auto same_values = [](const auto& actual, const auto& expected) {
+        return std::equal(actual.begin(), actual.end(), expected.begin(),
+                          [](double a, double b) {
+                            return std::isfinite(a) && std::isfinite(b) &&
+                                   std::abs(a - b) <= 1e-9;
+                          });
+      };
+      if (!same_values(active_toolset.end.pos, requested.end.pos) ||
+          !same_values(active_toolset.ref.pos, requested.ref.pos) ||
+          !same_values(active_toolset.end.trans, requested.end.trans) ||
+          !same_values(active_toolset.end.rpy, requested.end.rpy) ||
+          !same_values(active_toolset.ref.trans, requested.ref.trans) ||
+          !same_values(active_toolset.ref.rpy, requested.ref.rpy) ||
+          !same_values(active_toolset.load.inertia, requested.load.inertia)) {
+        throw std::runtime_error("impedance refused before power-on: payload readback changed TCP/reference/inertia");
+      }
+      std::cout << "[ROKAE] calibrated payload applied to SDK Toolset and read back."
+                << std::endl;
+    }
     std::cout << "[ROKAE] active load: mass=" << active_toolset.load.mass
               << " kg cog=[" << active_toolset.load.cog[0] << ","
               << active_toolset.load.cog[1] << ","
@@ -832,17 +1353,37 @@ class Session final : public SessionBase {
               << active_toolset.load.inertia[0] << ","
               << active_toolset.load.inertia[1] << ","
               << active_toolset.load.inertia[2] << "] kg*m^2" << std::endl;
+    if (impedance) {
+      config_.validate_impedance_load(active_toolset.load.mass,
+                                     active_toolset.load.cog,
+                                     active_toolset.load.inertia);
+      std::cout << "[ROKAE] load check passed (not a calibration quality assessment)." << std::endl;
+      std::cout << "[ROKAE] active TCP relative to flange: xyz=["
+                << active_toolset.end.trans[0] << "," << active_toolset.end.trans[1]
+                << "," << active_toolset.end.trans[2] << "] m rpy=["
+                << active_toolset.end.rpy[0] << "," << active_toolset.end.rpy[1]
+                << "," << active_toolset.end.rpy[2]
+                << "] rad (preserved; payload CoM is not TCP)" << std::endl;
+      if (std::all_of(active_toolset.load.inertia.begin(), active_toolset.load.inertia.end(),
+                      [](double value) { return value == 0.0; })) {
+        std::cout << "[ROKAE] WARNING: controller inertia is zero/unverified; mass/CoM identification does not validate rotational dynamics." << std::endl;
+      }
+    }
     robot_->setRtNetworkTolerance(config_.rt_network_tolerance, ec);
     check_ec(ec, "setRtNetworkTolerance");
     prepare_motion(power_on, rokae::MotionControlMode::RtCommand);
     entered_realtime_ = true;
     std::atomic_store(&callback_error_, std::shared_ptr<const std::string>{});
     try {
-      robot_->startReceiveRobotState(
-          std::chrono::milliseconds(1),
-          {rokae::RtSupportedFields::tcpPose_m,
-           rokae::RtSupportedFields::jointPos_m,
-           rokae::RtSupportedFields::jointVel_m});
+      std::vector<std::string> realtime_fields{
+          rokae::RtSupportedFields::tcpPose_m,
+          rokae::RtSupportedFields::jointPos_m,
+          rokae::RtSupportedFields::jointVel_m};
+      if constexpr (DoF == 7) {
+        realtime_fields.push_back(rokae::RtSupportedFields::elbow_m);
+      }
+      robot_->startReceiveRobotState(std::chrono::milliseconds(1),
+                                     realtime_fields);
       receiver_started_ = true;
       robot_->updateRobotState(std::chrono::milliseconds(10));
       Pose measured{};
@@ -850,8 +1391,41 @@ class Session final : public SessionBase {
         throw std::runtime_error("getStateData(tcpPose_m) failed during realtime initialization");
       }
       validate_pose(measured, "initial realtime measured TCP");
-      std::atomic_store(&measured_pose_, std::make_shared<const Pose>(measured));
+      store_measured_pose(measured);
+      std::array<double, DoF> measured_joints{};
+      if (robot_->getStateData(rokae::RtSupportedFields::jointPos_m,
+                               measured_joints) != 0) {
+        throw std::runtime_error(
+            "getStateData(jointPos_m) failed during realtime initialization");
+      }
+      store_measured_joints(measured_joints);
       core_.reset(measured, now_seconds());
+      // Enter HOLD before starting the SDK loop, not after returning to Python.
+      // HOLD freezes the reference; it is not motor disable or joint position hold.
+      if (impedance) core_.hold();
+      // The official 0.3.4 impedance example omits hasElbow. This is not proof
+      // that redundancy is stable for this payload/posture. Do not force an
+      // unverified elbow target or confuse TCP stiffness with nullspace control.
+      preserve_realtime_elbow_ = false;
+      if constexpr (DoF == 7) {
+        if (!impedance) {
+          double measured_elbow = 0.0;
+          if (robot_->getStateData(rokae::RtSupportedFields::elbow_m,
+                                   measured_elbow) != 0 ||
+              !std::isfinite(measured_elbow)) {
+            throw std::runtime_error(
+                "getStateData(elbow_m) failed during realtime initialization");
+          }
+          realtime_elbow_ = measured_elbow;
+          measured_elbow_.store(measured_elbow);
+          preserve_realtime_elbow_ = true;
+          std::cout << "[ROKAE] locking 7-axis realtime elbow angle at "
+                    << realtime_elbow_ << " rad" << std::endl;
+        } else {
+          std::cout << "[ROKAE] cartesian impedance leaves the arm angle free"
+                    << std::endl;
+        }
+      }
 
       controller_ = robot_->getRtMotionController().lock();
       if (!controller_) throw std::runtime_error("getRtMotionController returned an empty handle");
@@ -870,13 +1444,44 @@ class Session final : public SessionBase {
                 << (config_.controller_rate_limit ? "on" : "off")
                 << " cutoff=" << config_.controller_filter_cutoff_hz
                 << " Hz" << std::endl;
-      std::function<rokae::CartesianPosition()> callback = [this]() {
+      std::function<rokae::CartesianPosition()> callback = [this, impedance]() {
         try {
           Pose current{};
-          if (robot_->getStateData(rokae::RtSupportedFields::tcpPose_m, current) == 0) {
-            std::atomic_store(&measured_pose_, std::make_shared<const Pose>(current));
+          const int tcp_status = robot_->getStateData(rokae::RtSupportedFields::tcpPose_m, current);
+          if (impedance && tcp_status != 0) {
+            throw std::runtime_error("impedance TCP state read failed; refusing cached-state equilibrium limiting");
           }
-          rokae::CartesianPosition command(core_.step(now_seconds()));
+          if (tcp_status == 0) {
+            if (impedance) validate_pose(current, "impedance measured TCP");
+            store_measured_pose(current);
+          }
+          std::array<double, DoF> joints{};
+          if (robot_->getStateData(rokae::RtSupportedFields::jointPos_m,
+                                   joints) == 0) {
+            store_measured_joints(joints);
+          }
+          if constexpr (DoF == 7) {
+            double elbow = 0.0;
+            if (robot_->getStateData(rokae::RtSupportedFields::elbow_m,
+                                     elbow) == 0 && std::isfinite(elbow)) {
+              measured_elbow_.store(elbow);
+            }
+          }
+          Pose stepped = core_.step(now_seconds());
+          if (impedance) {
+            Pose measured_now{};
+            if (load_measured_pose(measured_now)) {
+              stepped = limit_equilibrium_pose(
+                  stepped, measured_now,
+                  config_.max_equilibrium_translation_error,
+                  config_.max_equilibrium_rotation_error);
+            }
+          }
+          rokae::CartesianPosition command(stepped);
+          if (preserve_realtime_elbow_) {
+            command.elbow = realtime_elbow_;
+            command.hasElbow = true;
+          }
           if (core_.should_finish()) command.setFinished();
           return command;
         } catch (const std::exception& error) {
@@ -898,8 +1503,40 @@ class Session final : public SessionBase {
         }
       };
       callback_ = std::move(callback);
+      if (impedance) {
+        if constexpr (std::is_same_v<Robot, rokae::StandardRobot>) {
+          throw std::runtime_error(
+              "xCoreSDK 0.3.4 Cartesian impedance is only on cobot controllers");
+        } else {
+          // Toolset readback proves the SDK tool configuration, not a separate
+          // realtime dynamics readback. Explicitly pass the same validated load
+          // through the RT API before startMove; never change protection limits.
+          controller_->setLoad(active_toolset.load, ec);
+          check_ec(ec, "RtMotionControl::setLoad(impedance)");
+          std::cout << "[ROKAE] RT setLoad accepted: mass="
+                    << active_toolset.load.mass
+                    << " kg (API success, not independent dynamics verification)"
+                    << std::endl;
+          controller_->setCartesianImpedance(config_.cartesian_stiffness, ec);
+          check_ec(ec, "setCartesianImpedance");
+          controller_->setCartesianImpedanceDesiredTorque(
+              config_.cartesian_desired_wrench, ec);
+          check_ec(ec, "setCartesianImpedanceDesiredTorque");
+          const std::array<double, 16> world_frame{
+              1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+          controller_->setFcCoor(world_frame, rokae::FrameType::world, ec);
+          check_ec(ec, "setFcCoor(world)");
+          std::cout << "[ROKAE] cartesian impedance stiffness N/m, Nm/rad =";
+          for (double value : config_.cartesian_stiffness) {
+            std::cout << " " << value;
+          }
+          std::cout << std::endl;
+        }
+      }
       controller_->setControlLoop(callback_, 0, true);
-      controller_->startMove(rokae::RtControllerMode::cartesianPosition);
+      controller_->startMove(impedance
+                                 ? rokae::RtControllerMode::cartesianImpedance
+                                 : rokae::RtControllerMode::cartesianPosition);
       controller_->startLoop(false);
     } catch (...) {
       if (controller_) {
@@ -916,19 +1553,153 @@ class Session final : public SessionBase {
       entered_realtime_ = false;
       throw;
     }
+    cartesian_impedance_ = impedance;
+    realtime_ = true;
+  }
+
+  void start_realtime_joint(const JointRealtimeConfig& joint_config, bool power_on) override {
+    if (realtime_) {
+      if (!joint_realtime_) {
+        throw std::runtime_error("realtime Cartesian control is already running");
+      }
+      return;
+    }
+    if (joint_config.dof() != DoF) {
+      throw std::invalid_argument("joint stream dof does not match the robot");
+    }
+    (void)tcp_pose();
+    std::error_code ec;
+    robot_->setRtNetworkTolerance(config_.rt_network_tolerance, ec);
+    check_ec(ec, "setRtNetworkTolerance");
+    prepare_motion(power_on, rokae::MotionControlMode::RtCommand);
+    entered_realtime_ = true;
+    std::atomic_store(&callback_error_, std::shared_ptr<const std::string>{});
+    joint_core_ = std::make_unique<JointRealtimeCore>(joint_config);
+    try {
+      robot_->startReceiveRobotState(
+          std::chrono::milliseconds(1),
+          {rokae::RtSupportedFields::tcpPose_m,
+           rokae::RtSupportedFields::jointPos_m,
+           rokae::RtSupportedFields::jointVel_m});
+      receiver_started_ = true;
+      robot_->updateRobotState(std::chrono::milliseconds(10));
+      std::array<double, DoF> measured_joints{};
+      if (robot_->getStateData(rokae::RtSupportedFields::jointPos_m,
+                               measured_joints) != 0) {
+        throw std::runtime_error(
+            "getStateData(jointPos_m) failed during joint realtime initialization");
+      }
+      store_measured_joints(measured_joints);
+      Pose measured{};
+      if (robot_->getStateData(rokae::RtSupportedFields::tcpPose_m, measured) == 0) {
+        store_measured_pose(measured);
+      }
+      joint_core_->reset(std::vector<double>(measured_joints.begin(), measured_joints.end()),
+                         now_seconds());
+      controller_ = robot_->getRtMotionController().lock();
+      if (!controller_) throw std::runtime_error("getRtMotionController returned an empty handle");
+      if (!controller_->setFilterLimit(config_.controller_rate_limit,
+                                       config_.controller_filter_cutoff_hz)) {
+        throw std::runtime_error("setFilterLimit rejected the configured values");
+      }
+      if constexpr (!std::is_same_v<Robot, rokae::StandardRobot>) {
+        controller_->setFilterFrequency(
+            config_.controller_filter_cutoff_hz,
+            config_.controller_filter_cutoff_hz,
+            config_.controller_filter_cutoff_hz, ec);
+        check_ec(ec, "setFilterFrequency");
+      }
+      std::cout << "[ROKAE] joint realtime stream: dof=" << DoF
+                << " cutoff=" << joint_config.reference_cutoff_hz
+                << " Hz" << std::endl;
+      std::function<rokae::JointPosition()> callback = [this]() {
+        try {
+          std::array<double, DoF> joints{};
+          if (robot_->getStateData(rokae::RtSupportedFields::jointPos_m,
+                                   joints) == 0) {
+            store_measured_joints(joints);
+          }
+          Pose current{};
+          if (robot_->getStateData(rokae::RtSupportedFields::tcpPose_m, current) == 0) {
+            store_measured_pose(current);
+          }
+          rokae::JointPosition command(DoF);
+          command.joints = joint_core_->step(now_seconds());
+          if (joint_core_->should_finish()) command.setFinished();
+          return command;
+        } catch (const std::exception& error) {
+          std::atomic_store(
+              &callback_error_,
+              std::make_shared<const std::string>(error.what()));
+          joint_core_->request_stop();
+          rokae::JointPosition command(joint_core_->command_joints());
+          command.setFinished();
+          return command;
+        } catch (...) {
+          std::atomic_store(
+              &callback_error_,
+              std::make_shared<const std::string>("unknown C++ callback exception"));
+          joint_core_->request_stop();
+          rokae::JointPosition command(joint_core_->command_joints());
+          command.setFinished();
+          return command;
+        }
+      };
+      joint_callback_ = std::move(callback);
+      controller_->setControlLoop(joint_callback_, 0, true);
+      controller_->startMove(rokae::RtControllerMode::jointPosition);
+      controller_->startLoop(false);
+    } catch (...) {
+      if (controller_) {
+        try { controller_->stopMove(); } catch (...) {}
+        try { controller_->stopLoop(); } catch (...) {}
+      }
+      if (receiver_started_) {
+        robot_->stopReceiveRobotState();
+        receiver_started_ = false;
+      }
+      controller_.reset();
+      joint_callback_ = {};
+      joint_core_.reset();
+      robot_->setMotionControlMode(rokae::MotionControlMode::NrtCommand, ec);
+      entered_realtime_ = false;
+      throw;
+    }
+    joint_realtime_ = true;
     realtime_ = true;
   }
 
   bool set_target(const Pose& target, double source, std::int64_t sequence) override {
+    if (joint_realtime_) {
+      throw std::runtime_error("realtime joint route does not accept Cartesian targets");
+    }
     if (!realtime_) throw std::runtime_error("realtime Cartesian control is not running");
     return core_.publish(target, source, sequence, now_seconds());
   }
 
-  void hold() override { if (realtime_) core_.hold(); }
+  bool set_target_joints(const std::vector<double>& target, double source,
+                         std::int64_t sequence) override {
+    if (!joint_realtime_ || !joint_core_) {
+      throw std::runtime_error("realtime joint control is not running");
+    }
+    return joint_core_->publish(target, source, sequence, now_seconds());
+  }
+
+  std::vector<double> command_joints() const override {
+    if (!joint_core_) throw std::runtime_error("joint command is unavailable");
+    return joint_core_->command_joints();
+  }
+
+  void hold() override {
+    if (!realtime_) return;
+    if (joint_realtime_ && joint_core_) joint_core_->hold();
+    else core_.hold();
+  }
 
   void stop_realtime() override {
     if (!realtime_ && !controller_ && !receiver_started_) return;
     core_.request_stop();
+    if (joint_core_) joint_core_->request_stop();
     std::exception_ptr first;
     if (controller_) {
       try { controller_->stopMove(); } catch (...) { first = std::current_exception(); }
@@ -940,7 +1711,10 @@ class Session final : public SessionBase {
     }
     controller_.reset();
     callback_ = {};
+    joint_callback_ = {};
     realtime_ = false;
+    joint_realtime_ = false;
+    cartesian_impedance_ = false;
     if (first) std::rethrow_exception(first);
   }
 
@@ -958,15 +1732,78 @@ class Session final : public SessionBase {
   Pose command_pose() const override { return core_.command_pose(); }
 
   Diagnostics diagnostics() const override {
-    auto result = core_.diagnostics(now_seconds());
+    auto result = (joint_realtime_ && joint_core_)
+                      ? joint_core_->diagnostics(now_seconds())
+                      : core_.diagnostics(now_seconds());
     result.connected = static_cast<bool>(robot_);
     result.realtime_running = realtime_;
+    result.realtime_route = joint_realtime_        ? "joint"
+                            : cartesian_impedance_ ? "cartesian_impedance"
+                            : realtime_            ? "cartesian"
+                                                   : "idle";
+    result.measured_joint_position = load_measured_joints();
+    if (joint_core_) {
+      result.commanded_joint_position = joint_core_->command_joints();
+      if (joint_realtime_) {
+        result.commanded_joint_velocity =
+            joint_core_->diagnostics(now_seconds()).commanded_joint_velocity;
+      }
+    }
+    result.elbow_lock_enabled = preserve_realtime_elbow_;
+    result.measured_elbow = measured_elbow_.load();
+    result.commanded_elbow = preserve_realtime_elbow_ ? realtime_elbow_ : 0.0;
     const auto callback_error = std::atomic_load(&callback_error_);
     if (callback_error) result.callback_error = *callback_error;
     return result;
   }
 
  private:
+  void store_measured_pose(const Pose& pose) noexcept {
+    measured_pose_sequence_.fetch_add(1, std::memory_order_acq_rel);
+    for (std::size_t index = 0; index < pose.size(); ++index) {
+      measured_pose_[index].store(pose[index], std::memory_order_relaxed);
+    }
+    measured_pose_sequence_.fetch_add(1, std::memory_order_release);
+    measured_pose_available_.store(true, std::memory_order_release);
+  }
+
+  bool load_measured_pose(Pose& pose) const noexcept {
+    if (!measured_pose_available_.load(std::memory_order_acquire)) return false;
+    for (;;) {
+      const auto before = measured_pose_sequence_.load(std::memory_order_acquire);
+      if ((before & 1U) != 0U) continue;
+      for (std::size_t index = 0; index < pose.size(); ++index) {
+        pose[index] = measured_pose_[index].load(std::memory_order_relaxed);
+      }
+      const auto after = measured_pose_sequence_.load(std::memory_order_acquire);
+      if (before == after) return true;
+    }
+  }
+
+  void store_measured_joints(const std::array<double, DoF>& joints) noexcept {
+    measured_joints_sequence_.fetch_add(1, std::memory_order_acq_rel);
+    for (std::size_t index = 0; index < DoF; ++index) {
+      measured_joints_[index].store(joints[index], std::memory_order_relaxed);
+    }
+    measured_joints_sequence_.fetch_add(1, std::memory_order_release);
+    measured_joints_available_.store(true, std::memory_order_release);
+  }
+
+  std::vector<double> load_measured_joints() const {
+    if (!measured_joints_available_.load(std::memory_order_acquire)) return {};
+    std::array<double, DoF> snapshot{};
+    for (;;) {
+      const auto before = measured_joints_sequence_.load(std::memory_order_acquire);
+      if ((before & 1U) != 0U) continue;
+      for (std::size_t index = 0; index < DoF; ++index) {
+        snapshot[index] = measured_joints_[index].load(std::memory_order_relaxed);
+      }
+      const auto after = measured_joints_sequence_.load(std::memory_order_acquire);
+      if (before == after) break;
+    }
+    return {snapshot.begin(), snapshot.end()};
+  }
+
   struct MotionProgress {
     bool reached;
     std::string detail;
@@ -1218,11 +2055,23 @@ class Session final : public SessionBase {
   std::unique_ptr<Robot> robot_;
   std::shared_ptr<Controller> controller_;
   std::function<rokae::CartesianPosition()> callback_;
-  std::shared_ptr<const Pose> measured_pose_;
+  std::function<rokae::JointPosition()> joint_callback_;
+  std::unique_ptr<JointRealtimeCore> joint_core_;
+  bool joint_realtime_{false};
+  bool cartesian_impedance_{false};
+  std::array<std::atomic<double>, 16> measured_pose_{};
+  std::atomic<std::uint64_t> measured_pose_sequence_{0};
+  std::atomic<bool> measured_pose_available_{false};
+  std::array<std::atomic<double>, DoF> measured_joints_{};
+  std::atomic<std::uint64_t> measured_joints_sequence_{0};
+  std::atomic<bool> measured_joints_available_{false};
   std::shared_ptr<const std::string> callback_error_;
   bool realtime_{false};
   bool entered_realtime_{false};
   bool receiver_started_{false};
+  bool preserve_realtime_elbow_{false};
+  double realtime_elbow_{0.0};
+  std::atomic<double> measured_elbow_{0.0};
 };
 
 }  // namespace
@@ -1265,6 +2114,12 @@ Pose RokaeDriver::get_base_frame() { return impl_->session->base_frame(); }
 Pose RokaeDriver::calculate_fk(const std::vector<double>& joints) {
   return impl_->session->calculate_fk(joints);
 }
+std::pair<bool, std::vector<std::array<double, 2>>> RokaeDriver::get_soft_limits() {
+  return impl_->session->soft_limits();
+}
+std::vector<ControllerLog> RokaeDriver::get_controller_logs(unsigned count, bool faults_only) {
+  return impl_->session->controller_logs(count, faults_only);
+}
 Pose RokaeDriver::preview_nrt_cartesian_target(const Pose& pose) {
   return impl_->session->preview_nrt_cartesian_target(pose);
 }
@@ -1282,9 +2137,36 @@ void RokaeDriver::move_to_init(const std::vector<double>& q, int speed,
                                double timeout, double max_delta, bool power_on) {
   move_joint(q, speed, timeout, max_delta, power_on);
 }
+void RokaeDriver::recover_from_joint_limits(const std::vector<double>& q,
+                                            int speed, double timeout,
+                                            double max_delta) {
+  impl_->session->recover_from_joint_limits(q, speed, timeout, max_delta);
+}
+void RokaeDriver::recover_disabled_soft_limits(
+    const std::vector<double>& q,
+    const std::vector<std::array<double, 2>>& limits,
+    double clearance_degrees,
+    bool request_power_on,
+    double jog_rate,
+    const std::function<void()>& check_cancel) {
+  impl_->session->recover_disabled_soft_limits(q, limits, clearance_degrees, request_power_on, jog_rate, check_cancel);
+}
 void RokaeDriver::start_realtime_cartesian(bool power_on) { impl_->session->start_realtime(power_on); }
+void RokaeDriver::start_realtime_cartesian_impedance(bool power_on) {
+  impl_->session->start_realtime_impedance(power_on);
+}
+void RokaeDriver::start_realtime_joint(const JointRealtimeConfig& config, bool power_on) {
+  impl_->session->start_realtime_joint(config, power_on);
+}
 bool RokaeDriver::set_target_pose(const Pose& pose, double source, std::int64_t sequence) {
   return impl_->session->set_target(pose, source, sequence);
+}
+bool RokaeDriver::set_target_joints(const std::vector<double>& joints, double source,
+                                    std::int64_t sequence) {
+  return impl_->session->set_target_joints(joints, source, sequence);
+}
+std::vector<double> RokaeDriver::get_command_joints() const {
+  return impl_->session->command_joints();
 }
 void RokaeDriver::hold() { impl_->session->hold(); }
 void RokaeDriver::stop_realtime() { impl_->session->stop_realtime(); }

@@ -1,0 +1,52 @@
+{
+  "schema": "rokae.fixed_impedance.v1",
+  "stage": "home",
+  "robot_config": "/data/Projects/DexRetarget/config/robots/rokae.yaml",
+  "task_config": "/data/Projects/DexRetarget/config/tasks/cup.yaml",
+  "robot_ip": "192.168.0.160",
+  "local_ip": "192.168.0.100",
+  "mass_kg": 0.93938639463,
+  "cog_m": [
+    -0.05271043598571,
+    0.01217669684527,
+    0.00860984186271
+  ],
+  "home_rad": [
+    0.0,
+    0.1332313,
+    0.0,
+    1.17304764,
+    0.0,
+    1.2835298642,
+    0.0
+  ],
+  "stiffness": [
+    300.0,
+    300.0,
+    300.0,
+    15.0,
+    15.0,
+    15.0
+  ],
+  "desired_wrench": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "duration_s": 5,
+  "home_speed_scale": 0.05,
+  "control_point": "existing flange-centre TCP; nonzero TCP refused",
+  "force_frame": "tool/flange; not world",
+  "inertia": "preserve current controller value; zero remains unverified",
+  "guard": {
+    "startup_s": 2,
+    "startup_joint_delta_rad": 0.02,
+    "joint_delta_rad": 0.25,
+    "joint_speed_rad_s": 0.15,
+    "tcp_translation_m": 0.03,
+    "tcp_rotation_rad": 0.15
+  }
+}

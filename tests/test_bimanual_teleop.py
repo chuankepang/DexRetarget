@@ -12,7 +12,7 @@ from anydexretarget.teleop import (
     make_transform,
     rotation_vector_to_matrix,
 )
-from example.teleop_dual_iiwa_robotiq import (
+from integrations.teleop_dual_iiwa_robotiq import (
     SideRuntime,
     _summary,
     _update_side,

@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-23",
+  "purpose": "Isolated SDK 0.3.4 fixed-reference impedance test implementation",
+  "new_directory": "rokae/impedance_test",
+  "config_sources": [
+    "config/robots/rokae.yaml",
+    "config/tasks/cup.yaml"
+  ],
+  "build": "Independent CMake Release build succeeded in dexteleop",
+  "pytest": {
+    "passed": 237,
+    "subtests_passed": 9,
+    "seconds": 7.78
+  },
+  "ctest": {
+    "passed": 1,
+    "tests": "constant-state hold, startup redundancy drift, joint excursion/speed, TCP displacement/rotation, invalid state"
+  },
+  "static_check": {
+    "python_files": 189,
+    "canonical_modules": 42,
+    "local_markdown_links": 158,
+    "errors": []
+  },
+  "hardware_actions_executed": [
+    "read-only inspect"
+  ],
+  "read_only_results": "data/diagnostics/impedance_test/inspect_3qt3y_ix",
+  "hardware_not_executed": [
+    "power-on",
+    "home MoveJ",
+    "impedance hold",
+    "external push",
+    "guard-triggered physical stopping"
+  ],
+  "review_findings_fixed": [
+    "Fresh joint start read before MoveJ",
+    "bounded preallocated single-writer trace",
+    "callback storage lifetime independent of local main stack",
+    "export trace only after successful loop join",
+    "no mode restoration until power-off and loop stop confirmed",
+    "dry-run and cancellation before native connection",
+    "no inertia guessing or protection threshold increase"
+  ],
+  "remaining": [
+    "Previous uncontrolled motion root cause unresolved",
+    "Inertia remains zero/unverified",
+    "No hardware validation of stopping/servo behavior",
+    "Not an automatic readiness or safety approval"
+  ]
+}

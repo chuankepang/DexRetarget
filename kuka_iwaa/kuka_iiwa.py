@@ -422,7 +422,7 @@ class KukaIiwa:
         """
         移动夹爪到位置 ``0..255``；开/合由位置值区分。
 
-        与 ``kuka_iiwa(2).py`` 的实际编码一致，运动类型固定为 Grasp，命令头
+        与 ``archive/kuka_iwaa/kuka_iiwa(2).py`` 的实际编码一致，运动类型固定为 Grasp，命令头
         固定为 4 字节：``_CM 03 <position> 07 00 _EE#``。
         """
         position = int(position)

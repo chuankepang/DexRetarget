@@ -13,7 +13,13 @@ from anydexretarget.teleop import (
     rotation_vector_to_matrix,
 )
 from anydexretarget.teleop.pose import matrix_to_rotation_vector
-from rokae.python import _rokae_cpp
+from native_support import HAS_NATIVE
+
+# Missing matching bindings must not prevent independent Python tests collecting.
+if HAS_NATIVE:
+    from rokae.python import _rokae_cpp
+else:
+    _rokae_cpp = None
 
 
 def config(control_hz: float) -> RealtimeCartesianConfig:
@@ -228,6 +234,7 @@ class RealtimeRateMatrixTest(unittest.TestCase):
         self.assertEqual(states[-1], "safe_stop")
 
 
+@unittest.skipIf(_rokae_cpp is None, "Native ROKAE binding is not built; not validated")
 class CppRealtimeCoreTest(unittest.TestCase):
     @staticmethod
     def cpp_config():

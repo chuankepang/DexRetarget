@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from example.input.quest3 import _HandState, _parse_line
+from integrations.input.quest3 import _HandState, _parse_line, _quat_to_matrix
 
 
 class Quest3InputTest(unittest.TestCase):
@@ -16,6 +16,30 @@ class Quest3InputTest(unittest.TestCase):
         hand = _HandState("right")
         hand.update_wrist(values)
         np.testing.assert_allclose(hand.wrist_position, [3.0, -1.0, 2.0])
+
+    def test_unity_forward_axis_roll_becomes_robot_world_x_axis_roll(self) -> None:
+        # Unity/HTS +Z is converted to this project's +X (forward).  Verify
+        # quaternion conversion, not just translation, because this is the
+        # wrist-roll axis used by the upright ROKAE init.
+        angle = np.deg2rad(20.0)
+        hand = _HandState("right")
+        self.assertTrue(
+            hand.update_wrist(
+                [0.0, 0.0, 0.0, 0.0, 0.0, np.sin(angle / 2.0), np.cos(angle / 2.0)]
+            )
+        )
+        # Rotation is an axial (pseudo-)vector.  The LH->RH reflection keeps
+        # the forward axis but reverses the positive rotation sign.
+        expected = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, np.cos(angle), np.sin(angle)],
+                [0.0, -np.sin(angle), np.cos(angle)],
+            ]
+        )
+        # ``world_points`` is unrelated here; inspect the converted wrist
+        # quaternion through the same matrix helper used by ``get_wrist_pose``.
+        np.testing.assert_allclose(_quat_to_matrix(hand.wrist_quat), expected, atol=1e-12)
 
     def test_malformed_wrist_does_not_refresh_tracking(self) -> None:
         hand = _HandState("left")

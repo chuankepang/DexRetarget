@@ -1,0 +1,19 @@
+{
+  "python_executable": "/data/miniconda3/envs/dexteleop/bin/python",
+  "python_version": "3.10.22 | packaged by conda-forge | (main, Oct  6 2026, 23:02:24) [GCC 14.4.0]",
+  "packages": {
+    "numpy": "2.2.6",
+    "h5py": "3.16.0",
+    "opencv-python": "4.14.0.94",
+    "pyserial": "3.5",
+    "pyrealsense2": "2.59.1.11053",
+    "torch": "2.7.1+cu128",
+    "torchvision": "0.22.1+cu128",
+    "lerobot": "0.1.0",
+    "datasets": "3.6.0",
+    "huggingface-hub": "0.36.2",
+    "av": "14.2.0",
+    "pytest": "9.1.1"
+  },
+  "lerobot_revision": "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+}

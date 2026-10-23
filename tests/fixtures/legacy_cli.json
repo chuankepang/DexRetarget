@@ -1,0 +1,544 @@
+[
+  {
+    "option_strings": [
+      "-h",
+      "--help"
+    ],
+    "dest": "help",
+    "nargs": 0,
+    "default": "==SUPPRESS==",
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--enable-hand"
+    ],
+    "dest": "enable_hand",
+    "nargs": 0,
+    "default": false,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--enable-arm"
+    ],
+    "dest": "enable_arm",
+    "nargs": 0,
+    "default": false,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--robot"
+    ],
+    "dest": "robot",
+    "nargs": null,
+    "default": "rokae",
+    "choices": [
+      "rokae"
+    ],
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--hand"
+    ],
+    "dest": "hand",
+    "nargs": null,
+    "default": "right",
+    "choices": [
+      "left",
+      "right"
+    ],
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--optimizer"
+    ],
+    "dest": "optimizer",
+    "nargs": null,
+    "default": "adaptive",
+    "choices": [
+      "adaptive",
+      "vector"
+    ],
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--hand-config"
+    ],
+    "dest": "hand_config",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--quest3-port"
+    ],
+    "dest": "quest3_port",
+    "nargs": null,
+    "default": 9000,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--quest3-protocol"
+    ],
+    "dest": "quest3_protocol",
+    "nargs": null,
+    "default": "udp",
+    "choices": [
+      "udp",
+      "tcp"
+    ],
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--inspire-port"
+    ],
+    "dest": "inspire_port",
+    "nargs": null,
+    "default": "/dev/ttyUSB0",
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--inspire-baudrate"
+    ],
+    "dest": "inspire_baudrate",
+    "nargs": null,
+    "default": 115200,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--inspire-hand-id"
+    ],
+    "dest": "inspire_hand_id",
+    "nargs": null,
+    "default": 1,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-config"
+    ],
+    "dest": "arm_config",
+    "nargs": null,
+    "default": "config/robots/rokae.yaml",
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-control"
+    ],
+    "dest": "arm_control",
+    "nargs": null,
+    "default": null,
+    "choices": [
+      "pinocchio",
+      "cartesian",
+      "impedance"
+    ],
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--mock-rokae"
+    ],
+    "dest": "mock_rokae",
+    "nargs": 0,
+    "default": false,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-start-enabled"
+    ],
+    "dest": "arm_start_enabled",
+    "nargs": 0,
+    "default": false,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-robot-ip"
+    ],
+    "dest": "rokae_robot_ip",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-local-ip"
+    ],
+    "dest": "rokae_local_ip",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-robot-type"
+    ],
+    "dest": "rokae_robot_type",
+    "nargs": null,
+    "default": null,
+    "choices": [
+      "xmate-6",
+      "xmate-er-pro-7",
+      "standard-6"
+    ],
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-sdk-path"
+    ],
+    "dest": "rokae_sdk_path",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-move-to-init"
+    ],
+    "dest": "rokae_move_to_init",
+    "nargs": 0,
+    "default": false,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--skip-init"
+    ],
+    "dest": "skip_init",
+    "nargs": 0,
+    "default": false,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-rt-network-tolerance"
+    ],
+    "dest": "rokae_rt_network_tolerance",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--rokae-power-on",
+      "--no-rokae-power-on"
+    ],
+    "dest": "rokae_power_on",
+    "nargs": 0,
+    "default": true,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--robot-initial-pose"
+    ],
+    "dest": "robot_initial_pose",
+    "nargs": 7,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--world-base-pose"
+    ],
+    "dest": "world_base_pose",
+    "nargs": 7,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--quest-to-robot-rotation"
+    ],
+    "dest": "quest_to_robot_rotation",
+    "nargs": 9,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-translation-scale"
+    ],
+    "dest": "arm_translation_scale",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-rotation-scale"
+    ],
+    "dest": "arm_rotation_scale",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-translation-speed"
+    ],
+    "dest": "arm_max_translation_speed",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-angular-speed"
+    ],
+    "dest": "arm_max_angular_speed",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-translation-cutoff-hz"
+    ],
+    "dest": "arm_translation_cutoff_hz",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-rotation-cutoff-hz"
+    ],
+    "dest": "arm_rotation_cutoff_hz",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-translation-deadband"
+    ],
+    "dest": "arm_translation_deadband",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-rotation-deadband"
+    ],
+    "dest": "arm_rotation_deadband",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-translation-acceleration"
+    ],
+    "dest": "arm_max_translation_acceleration",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-angular-acceleration"
+    ],
+    "dest": "arm_max_angular_acceleration",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-translation-jerk"
+    ],
+    "dest": "arm_max_translation_jerk",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-angular-jerk"
+    ],
+    "dest": "arm_max_angular_jerk",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-target-translation-delta"
+    ],
+    "dest": "arm_max_target_translation_delta",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-max-target-rotation-delta"
+    ],
+    "dest": "arm_max_target_rotation_delta",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-workspace-min"
+    ],
+    "dest": "arm_workspace_min",
+    "nargs": 3,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-workspace-max"
+    ],
+    "dest": "arm_workspace_max",
+    "nargs": 3,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-tracking-timeout"
+    ],
+    "dest": "arm_tracking_timeout",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-stop-timeout"
+    ],
+    "dest": "arm_stop_timeout",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--quest-reference-timeout"
+    ],
+    "dest": "quest_reference_timeout",
+    "nargs": null,
+    "default": 15.0,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-print-hz"
+    ],
+    "dest": "arm_print_hz",
+    "nargs": null,
+    "default": 10.0,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--arm-record"
+    ],
+    "dest": "arm_record",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--task-config"
+    ],
+    "dest": "task_config",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--capture",
+      "--no-capture"
+    ],
+    "dest": "capture",
+    "nargs": 0,
+    "default": null,
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--task"
+    ],
+    "dest": "task",
+    "nargs": null,
+    "default": "",
+    "choices": null,
+    "required": false
+  },
+  {
+    "option_strings": [
+      "--collection-config"
+    ],
+    "dest": "collection_config",
+    "nargs": null,
+    "default": null,
+    "choices": null,
+    "required": false
+  }
+]

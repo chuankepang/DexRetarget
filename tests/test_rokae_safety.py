@@ -16,7 +16,7 @@ from anydexretarget.teleop.pose import (
     matrix_to_rotation_vector,
     rotation_vector_to_matrix,
 )
-from example.output.real.drivers_rokae import MockRokaeDriver
+from dexretarget.teleop.devices.rokae import MockRokaeDriver
 
 
 def safety_config(**overrides) -> PoseSafetyConfig:
@@ -124,6 +124,19 @@ class PoseSafetyTest(unittest.TestCase):
         controller.set_enabled(True)
         enabled = controller.update(make_transform([0.6, 0.0, 0.0]), 0.06)
         np.testing.assert_allclose(enabled.base_target_safe, moved.base_target_safe)
+
+    def test_velocity_limiting_does_not_disable_following(self) -> None:
+        controller = ArmTeleopController(
+            RelativePoseMapper(np.eye(3), np.eye(4)),
+            PoseSafetyLimiter(safety_config()),
+        )
+        controller.initialize(np.eye(4), np.eye(4), 0.0)
+        command = controller.update(make_transform([0.5, 0.0, 0.0]), 0.01)
+        self.assertTrue(controller.enabled)
+        self.assertEqual(command.status, "active")
+        self.assertAlmostEqual(command.base_target_safe[0, 3], 0.001)
+        controller.set_enabled(False)
+        self.assertEqual(controller.status, "hold_disabled")
 
     def test_mock_driver_latest_value_and_timeout_hold(self) -> None:
         driver = MockRokaeDriver(np.eye(4), control_hz=500.0, command_timeout=0.20)

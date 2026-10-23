@@ -8,14 +8,21 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 find_package(Threads REQUIRED)
 
-if(NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-  message(FATAL_ERROR "The vendored xCoreSDK-CPP runtime is aarch64-only; got ${CMAKE_SYSTEM_PROCESSOR}")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" SDK_ARCH)
+if(SDK_ARCH STREQUAL "amd64")
+  set(SDK_ARCH "x86_64")
+elseif(SDK_ARCH STREQUAL "arm64")
+  set(SDK_ARCH "aarch64")
+endif()
+if(NOT SDK_ARCH MATCHES "^(aarch64|x86_64)$")
+  message(FATAL_ERROR "Supported xCoreSDK Linux architectures: aarch64 and x86_64; got ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
 set(SDK_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/include")
-set(SDK_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sdk/lib/aarch64")
+set(SDK_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sdk/lib/${SDK_ARCH}")
 set(SDK_LIBRARY "${SDK_LIB_DIR}/libxCoreSDK.so.0.3.4")
 set(PYBIND_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybind11/include")
+message(STATUS "ROKAE SDK architecture: ${SDK_ARCH}; runtime: ${SDK_LIBRARY}")
 
 foreach(required
     "${SDK_INCLUDE}/rokae/robot.h"
@@ -39,6 +46,7 @@ endif()
 
 add_library(_rokae_cpp MODULE
   src/rokae_driver.cpp
+  src/joint_realtime.cpp
   src/pybind_module.cpp)
 target_include_directories(_rokae_cpp PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -52,4 +60,4 @@ set_target_properties(_rokae_cpp PROPERTIES
   SUFFIX "${PYTHON_EXTENSION_SUFFIX}"
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/python"
   BUILD_RPATH "${SDK_LIB_DIR}"
-  INSTALL_RPATH "\$ORIGIN/../sdk/lib/aarch64")
+  INSTALL_RPATH "\$ORIGIN/../sdk/lib/${SDK_ARCH}")
