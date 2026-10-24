@@ -1,4 +1,5 @@
 #include "rokae_driver.hpp"
+#include "realtime_startup.hpp"
 
 #include <algorithm>
 #include <any>
@@ -797,12 +798,19 @@ class Session final : public SessionBase {
     return result;
   }
 
-  void prepare_motion(bool power_on, rokae::MotionControlMode mode) {
+  void prepare_motion(bool power_on, rokae::MotionControlMode mode,
+                      bool mode_before_power = false) {
     require_connected();
     std::error_code ec;
     std::cout << "[ROKAE] requesting automatic operate mode ..." << std::endl;
     robot_->setOperateMode(rokae::OperateMode::automatic, ec);
     check_ec(ec, "setOperateMode(automatic)");
+    // 阻抗遵循官方 0.3.4 顺序：automatic -> RtCommand -> power on。
+    // 其余控制路线保留既有顺序，避免改变已使用的位置控制启动行为。
+    if (mode_before_power) {
+      robot_->setMotionControlMode(mode, ec);
+      check_ec(ec, "setMotionControlMode(before power-on)");
+    }
     if (power_on) {
       std::cout << "[ROKAE] requesting motor power-on ..." << std::endl;
       robot_->setPowerState(true, ec);
@@ -832,9 +840,14 @@ class Session final : public SessionBase {
           "robot did not reach power=on within 10 seconds; check enable "
           "switch, automatic mode, safety circuit and controller alarms");
     }
-    std::cout << "[ROKAE] power=on; selecting motion control mode ..." << std::endl;
-    robot_->setMotionControlMode(mode, ec);
-    check_ec(ec, "setMotionControlMode");
+    if (!mode_before_power) {
+      std::cout << "[ROKAE] power=on; selecting motion control mode ..." << std::endl;
+      robot_->setMotionControlMode(mode, ec);
+      check_ec(ec, "setMotionControlMode");
+    } else {
+      std::cout << "[ROKAE] power=on; realtime command mode selected before power-on."
+                << std::endl;
+    }
     if (mode == rokae::MotionControlMode::NrtCommand) {
       // Do not inherit an unknown low online scale from an earlier SDK client.
       // This scale is independent of MoveAbsJ/MoveL's integer speed setting.
@@ -1371,10 +1384,57 @@ class Session final : public SessionBase {
     }
     robot_->setRtNetworkTolerance(config_.rt_network_tolerance, ec);
     check_ec(ec, "setRtNetworkTolerance");
-    prepare_motion(power_on, rokae::MotionControlMode::RtCommand);
+    if (!impedance) {
+      prepare_motion(power_on, rokae::MotionControlMode::RtCommand);
+    }
     entered_realtime_ = true;
     std::atomic_store(&callback_error_, std::shared_ptr<const std::string>{});
     try {
+      // 模式已在上电前切换，后续失败也必须经过下方的模式清理路径。
+      if (impedance) {
+        prepare_motion(power_on, rokae::MotionControlMode::RtCommand, true);
+      }
+      if (impedance) {
+        controller_ = robot_->getRtMotionController().lock();
+        if (!controller_) throw std::runtime_error("empty realtime controller");
+        // 同步已保存的 TCP 到实时接口；必须在读取初始实时 TCP 之前执行。
+        // 不是用重心替代 TCP，也不改变用户工具定义。
+        controller_->setEndEffectorFrame(active_toolset.end.pos, ec);
+        check_ec(ec, "RtMotionControl::setEndEffectorFrame(impedance)");
+      }
+      // 先完成会影响动力学的配置，再获取启动参考，避免以配置前的缓存作平衡点。
+      if (impedance) {
+        if constexpr (std::is_same_v<Robot, rokae::StandardRobot>) {
+          throw std::runtime_error(
+              "xCoreSDK 0.3.4 Cartesian impedance is only on cobot controllers");
+        } else {
+          // 先设置力控坐标，再负载/刚度/期望力，与官方示例及独立试验一致。
+          // 这是力控任务坐标，不用于旋转或交换法兰坐标系中的负载重心。
+          const std::array<double, 16> world_frame{
+              1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+          controller_->setFcCoor(world_frame, rokae::FrameType::world, ec);
+          check_ec(ec, "setFcCoor(world)");
+          // Toolset readback proves the SDK tool configuration, not a separate
+          // realtime dynamics readback. Explicitly pass the same validated load
+          // through the RT API before startMove; never change protection limits.
+          controller_->setLoad(active_toolset.load, ec);
+          check_ec(ec, "RtMotionControl::setLoad(impedance)");
+          std::cout << "[ROKAE] RT setLoad accepted: mass="
+                    << active_toolset.load.mass
+                    << " kg (API success, not independent dynamics verification)"
+                    << std::endl;
+          controller_->setCartesianImpedance(config_.cartesian_stiffness, ec);
+          check_ec(ec, "setCartesianImpedance");
+          controller_->setCartesianImpedanceDesiredTorque(
+              config_.cartesian_desired_wrench, ec);
+          check_ec(ec, "setCartesianImpedanceDesiredTorque");
+          std::cout << "[ROKAE] cartesian impedance stiffness N/m, Nm/rad =";
+          for (double value : config_.cartesian_stiffness) {
+            std::cout << " " << value;
+          }
+          std::cout << std::endl;
+        }
+      }
       std::vector<std::string> realtime_fields{
           rokae::RtSupportedFields::tcpPose_m,
           rokae::RtSupportedFields::jointPos_m,
@@ -1382,10 +1442,15 @@ class Session final : public SessionBase {
       if constexpr (DoF == 7) {
         realtime_fields.push_back(rokae::RtSupportedFields::elbow_m);
       }
-      robot_->startReceiveRobotState(std::chrono::milliseconds(1),
-                                     realtime_fields);
-      receiver_started_ = true;
-      robot_->updateRobotState(std::chrono::milliseconds(10));
+      receiver_started_ = true; // 初始化失败也需要停止接收。
+      if (impedance) {
+        const auto packets = rokae_startup::receive_startup_state(*robot_, realtime_fields);
+        std::cout << "[ROKAE] post-setup RT subscription ready; received packets="
+                  << packets << std::endl;
+      } else {
+        robot_->startReceiveRobotState(std::chrono::milliseconds(1), realtime_fields);
+        robot_->updateRobotState(std::chrono::milliseconds(10));
+      }
       Pose measured{};
       if (robot_->getStateData(rokae::RtSupportedFields::tcpPose_m, measured) != 0) {
         throw std::runtime_error("getStateData(tcpPose_m) failed during realtime initialization");
@@ -1503,36 +1568,6 @@ class Session final : public SessionBase {
         }
       };
       callback_ = std::move(callback);
-      if (impedance) {
-        if constexpr (std::is_same_v<Robot, rokae::StandardRobot>) {
-          throw std::runtime_error(
-              "xCoreSDK 0.3.4 Cartesian impedance is only on cobot controllers");
-        } else {
-          // Toolset readback proves the SDK tool configuration, not a separate
-          // realtime dynamics readback. Explicitly pass the same validated load
-          // through the RT API before startMove; never change protection limits.
-          controller_->setLoad(active_toolset.load, ec);
-          check_ec(ec, "RtMotionControl::setLoad(impedance)");
-          std::cout << "[ROKAE] RT setLoad accepted: mass="
-                    << active_toolset.load.mass
-                    << " kg (API success, not independent dynamics verification)"
-                    << std::endl;
-          controller_->setCartesianImpedance(config_.cartesian_stiffness, ec);
-          check_ec(ec, "setCartesianImpedance");
-          controller_->setCartesianImpedanceDesiredTorque(
-              config_.cartesian_desired_wrench, ec);
-          check_ec(ec, "setCartesianImpedanceDesiredTorque");
-          const std::array<double, 16> world_frame{
-              1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-          controller_->setFcCoor(world_frame, rokae::FrameType::world, ec);
-          check_ec(ec, "setFcCoor(world)");
-          std::cout << "[ROKAE] cartesian impedance stiffness N/m, Nm/rad =";
-          for (double value : config_.cartesian_stiffness) {
-            std::cout << " " << value;
-          }
-          std::cout << std::endl;
-        }
-      }
       controller_->setControlLoop(callback_, 0, true);
       controller_->startMove(impedance
                                  ? rokae::RtControllerMode::cartesianImpedance
@@ -1542,6 +1577,14 @@ class Session final : public SessionBase {
       if (controller_) {
         try { controller_->stopMove(); } catch (...) {}
         try { controller_->stopLoop(); } catch (...) {}
+      }
+      // 初始化断流等失败也可能发生在上电后、realtime_ 标志置位前。
+      // 必须先请求阻抗路线下电，不能仅切换命令模式后抛出异常。
+      if (impedance) {
+        std::error_code power_ec;
+        robot_->setPowerState(false, power_ec);
+        if (power_ec) std::cerr << "[ROKAE] impedance startup power-off request failed: "
+                                << power_ec.message() << std::endl;
       }
       if (receiver_started_) {
         robot_->stopReceiveRobotState();

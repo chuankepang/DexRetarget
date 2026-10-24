@@ -1,4 +1,4 @@
-"""Calibration units and native startup guard; no robot connections."""
+"""Payload units and native startup guard; no robot connections."""
 from pathlib import Path
 
 import numpy as np
@@ -12,16 +12,18 @@ from native_support import HAS_NATIVE
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def calibrated_spec():
+def calibrated_spec(apply):
     config = yaml.safe_load((ROOT / 'config/robots/rokae.yaml').read_text())
+    config['robot']['payload']['apply_on_impedance_start'] = apply
     return resolve_controller(config, cli='impedance')
 
 
-def test_calibration_uses_metres_and_full_assembly_mass():
-    spec = calibrated_spec()
-    assert spec.expected_load_mass == pytest.approx(0.93938639463)
-    np.testing.assert_allclose(spec.expected_load_cog,
-        np.array([-52.71043598571, 12.17669684527, 8.60984186271]) / 1000)
+@pytest.mark.parametrize('cog', [[0, 0, .052], [0, 0, -.052], [-.02690277, .02348004, -.04145851]])
+def test_payload_metres_and_axis_signs_preserved(cog):
+    spec = resolve_controller({'robot': {'payload': {
+        'mass_kg': .9642, 'cog_m': cog, 'apply_on_impedance_start': True}}}, cli='impedance')
+    assert spec.expected_load_mass == pytest.approx(.9642)
+    np.testing.assert_allclose(spec.expected_load_cog, cog)
 
 
 @pytest.mark.parametrize('payload', [
@@ -36,17 +38,18 @@ def test_invalid_calibration_rejected(payload):
 
 
 @pytest.mark.skipif(not HAS_NATIVE, reason='Native bridge unavailable; not validated')
-def test_config_to_native_and_controller_tool_matching():
+@pytest.mark.parametrize('apply', [True, False])
+def test_config_to_native_and_controller_tool_matching(apply):
     from rokae.python import _rokae_cpp
     driver = RokaeXCoreDriver('127.0.0.1', '127.0.0.1')
-    spec = calibrated_spec()
+    spec = calibrated_spec(apply)
     apply_realtime_gains(driver, spec)
     cfg = driver._cpp_config(_rokae_cpp)
-    assert cfg.apply_load_on_impedance_start is True
+    assert cfg.apply_load_on_impedance_start is apply
     assert cfg.expected_load_mass == spec.expected_load_mass
     np.testing.assert_allclose(cfg.expected_load_cog, spec.expected_load_cog)
-    # RobotAssist displays rounded values; zero inertia is reported, not invented.
-    cfg.validate_impedance_load(0.939386, [-0.05271043, 0.012176697, 0.008609842], [0, 0, 0])
+    # User-selected estimate passes unchanged to native validation; inertia remains unverified.
+    cfg.validate_impedance_load(spec.expected_load_mass, spec.expected_load_cog, [0, 0, 0])
     for mass, cog, inertia in [
         (0, spec.expected_load_cog, [0, 0, 0]),
         (1.25, spec.expected_load_cog, [0, 0, 0]),

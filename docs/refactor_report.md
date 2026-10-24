@@ -68,7 +68,7 @@
 
 ## 实际执行结果
 
-统一解释器为 `/data/miniconda3/envs/dexteleop/bin/python`。汇总原始指标见[验证证据 JSON](validation/refactor_20261022.json)。
+统一解释器为 `/data/miniconda3/envs/dexteleop/bin/python`。汇总原始指标见[验证证据 JSON](validation/run_history.md)。
 
 | 检查 | 结果与范围 |
 | --- | --- |

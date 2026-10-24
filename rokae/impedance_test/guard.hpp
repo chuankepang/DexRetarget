@@ -7,17 +7,40 @@
 namespace fixed_impedance {
 using Pose = std::array<double, 16>;
 using Joints = std::array<double, 7>;
+// 回位必须同时满足位置与速度，调用方要求连续满足 0.5 秒。
+inline bool home_stationary(const Joints& q,const Joints& home,const Joints& dq) {
+  for(std::size_t i=0;i<q.size();++i)
+    if(!std::isfinite(q[i])||!std::isfinite(home[i])||!std::isfinite(dq[i])||
+       std::abs(q[i]-home[i])>.002||std::abs(dq[i])>=.01)return false;
+  return true;
+}
 struct Limits {
   double startup_seconds{2.0};
-  double startup_joint_delta{0.02};  // rad; initial phase: do not touch the robot.
-  double joint_delta{0.25};         // rad from initial, including redundancy motion.
-  double joint_speed{0.15};         // rad/s; deliberately small push test.
-  double translation{0.03};         // m from the fixed equilibrium.
-  double rotation{0.15};            // rad from the fixed equilibrium.
+  double startup_joint_delta{0.04};  // rad; initial phase: do not touch the robot.
+  double joint_delta{0.50};         // rad from initial, including redundancy motion.
+  double joint_speed{0.30};         // rad/s; deliberately small push test.
+  double translation{0.06};         // m from the fixed equilibrium.
+  double rotation{0.30};            // rad from the fixed equilibrium.
 };
+// 显式轻推试验仅在初始无接触阶段结束后扩大速度/位移实验边界。
+// 不是额定安全范围；启动、姿态及控制器保护不变。
+inline Limits phase_limits(double seconds, bool light_push) {
+  Limits result;
+  if(light_push && seconds>=result.startup_seconds) {
+    result.joint_delta=1.0; // rad；容纳轻推时的冗余姿态变化，仍限制关节总行程。
+    result.joint_speed=.70; // rad/s；轻推阶段实验值，不改变启动检查或 SDK 限幅。
+    result.translation=.10;
+  }
+  return result;
+}
 enum class Stop { none, invalid_state, startup_drift, joint_excursion,
                   joint_speed, translation, rotation, duration, interrupted,
                   buffer_full, callback_exception, controller_fault };
+// 计时结束不等于无条件成功：启动、运行异常及清理结果都要参与退出判定。
+inline bool successful_exit(Stop stop, bool started, bool cleaned, bool runtime_failed) {
+  return started && cleaned && !runtime_failed &&
+         (stop==Stop::duration || stop==Stop::interrupted);
+}
 inline const char* reason(Stop value) {
   switch(value) {
     case Stop::none: return "none";

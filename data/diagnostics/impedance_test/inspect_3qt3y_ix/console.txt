@@ -1,3 +1,0 @@
-Robot=xMatePro3 controller=2.3.2 SDK=0.3.4
-Active controller mass=0.939386 kg; requested=0.939386 kg
-READ ONLY: saved state/tool summary and latest logs.

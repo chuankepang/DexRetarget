@@ -2,6 +2,8 @@
 
 核对日期：2026-10-23。现有位置控制保留；阻抗通过同一入口显式选择，配置仍统一在 [rokae.yaml](../../config/robots/rokae.yaml) 的 `control.impedance`。此文记录代码与官方资料核对，不代表真机接触测试已经通过。
 
+最新复核见[重心候选值与初始化顺序](payload_review.md)：用户确认 RobotAssist 使用原始辨识值可正常阻抗；没有证据支持把 XYZ 改成 `[12,8,52] mm`，未写入该候选。遥操作分支已对齐官方的 RtCommand/上电与力控坐标/增益设置顺序；独立试验此前已使用该顺序仍漂移，根因未解决。下文保留历史过程，其中“再次运行”的说明不能视为已通过静止验收。
+
 ## 2026-10-23：现场两步辨识结果与启动核对
 
 用户确认先拆下全部组件做空载辨识，再装回灵巧手、KWR75B、D435i、转接件和支架做带载辨识。结果来自 [质量/重心截图](../media/calib1.png) 和 [工具页面](../media/calib2.png)，装配见 [照片](../media/tcp.jpg)。这是整套负载，不再额外累加产品估计重量。
@@ -112,7 +114,7 @@ python -m dexretarget \
 
 - 全量 pytest：214 passed、9 subtests passed，7.84 s。
 - `tools/check_project.py`：184 个 Python 文件、42 个规范模块、139 个本地文档链接，errors 为空；未验证外部链接或硬件。
-- `tests/check_capture_entrypoint.py --synthetic-cameras --seconds 2 --arm-control impedance`：模拟机械臂、Quest UDP、Inspire 串口伪终端、合成双相机链路通过，覆盖暂停/恢复及两段成功/失败保存。成功段 145 帧、119 帧有效，失败段 24 帧；无缺失数据流。无效帧保留质量标志，不当作有效动作。见[原始报告](../../docs/validation/impedance_entrypoint_20261022.json)。
+- `tests/check_capture_entrypoint.py --synthetic-cameras --seconds 2 --arm-control impedance`：模拟机械臂、Quest UDP、Inspire 串口伪终端、合成双相机链路通过，覆盖暂停/恢复及两段成功/失败保存。成功段 145 帧、119 帧有效，失败段 24 帧；无缺失数据流。无效帧保留质量标志，不当作有效动作。见[原始报告](../../docs/validation/run_history.md)。
 - 本次修改仅为文档与验证报告；复用现有阻抗实现，未修改默认位置路线、cup home 或真机增益，未安装依赖，未连接或驱动真实机械臂。
 - 尚未验证：当前控制器固件与装配下的原生阻抗、负载/TCP 标定、接触力、振荡、实时调度稳定性、KWR 数据和实际阻尼。上述自动化通过不代表这些项目通过。
 
@@ -128,7 +130,7 @@ python -m dexretarget \
 
 调参顺序建议：先核实负载/TCP→固定平衡点无接触漂移检查→小位移单方向接触→释放后的回归/振荡检查→Quest 动态跟随。每次只改一个方向的刚度，停止后重启才应用 YAML。以希望 10 mm 静态偏差约对应 3 N 为例，K≈300 N/m；它是设计计算，不是实测接触力保证。降低刚度会增大负载误差引起的偏移，不能把“越软越安全”当作调参原则；发生振荡时先停止检查负载、延迟、坐标与接触条件，不通过修改 `mock_damping` 处理真机振荡。
 
-本次重新验证结果：dexteleop 内 x86_64 原生绑定编译成功；全量 pytest 为 215 passed、9 subtests passed（7.73 s），新增 Python 阻抗层无效反馈不发布新平衡点测试。原生 SDK 回调读失败分支仅完成编译和人工路径审查，未以真机/SDK 故障注入验证。集成测试首次因旧断言假定 translation_scale=0.8 而失败，现通过显式 CLI 固定测试比例，保留现场配置 1.0；重跑成功段 144 帧、120 帧有效，失败段 24 帧，无缺失数据流，见[本次报告](../../docs/validation/impedance_rereview_20261022.json)。文档/架构检查 errors 为空。未进行真机接触、负载标定或刚度/阻尼实测。
+本次重新验证结果：dexteleop 内 x86_64 原生绑定编译成功；全量 pytest 为 215 passed、9 subtests passed（7.73 s），新增 Python 阻抗层无效反馈不发布新平衡点测试。原生 SDK 回调读失败分支仅完成编译和人工路径审查，未以真机/SDK 故障注入验证。集成测试首次因旧断言假定 translation_scale=0.8 而失败，现通过显式 CLI 固定测试比例，保留现场配置 1.0；重跑成功段 144 帧、120 帧有效，失败段 24 帧，无缺失数据流，见[本次报告](../../docs/validation/run_history.md)。文档/架构检查 errors 为空。未进行真机接触、负载标定或刚度/阻尼实测。
 
 ## 现场抖动与保护下电排查（2026-10-22）
 
@@ -195,7 +197,7 @@ python -m dexretarget \
 
 本次实际执行两次只读查询，未调用运动/上电/清警报/负载写入。状态为 xMatePro3、xCore 2.3.2、SDK 0.3.4、power off、automatic、idle。当前 TCP 高度约 0.7530 m 只是故障后的单个位置，不能推断发生过多少向上位移。
 
-为避免连接信息挤占最近 10 条日志，增加可选 `get_controller_logs(faults_only=True)`，使用官方 warning/error 过滤；默认接口行为保留。原始数据见 [只读故障记录](../../docs/validation/impedance_faults_20261023.json)。官方查询上限为 10，过滤结果仍不是完整控制器归档。
+为避免连接信息挤占最近 10 条日志，增加可选 `get_controller_logs(faults_only=True)`，使用官方 warning/error 过滤；默认接口行为保留。原始数据见 [只读故障记录](../../docs/validation/run_history.md)。官方查询上限为 10，过滤结果仍不是完整控制器归档。
 
 | 控制器时间 | 实际事件 |
 | --- | --- |
@@ -258,7 +260,7 @@ python -m dexretarget \
 
 ## hold_1jjub90t：0.11 秒无输入抬升与惯量/升级判断
 
-本次使用用户实际生成的 CSV 与 summary 做离线分析，未连接或操作机器人。可复现报告见 [分析 JSON](../../docs/validation/hold_1jjub90t_analysis.json)。
+本次使用用户实际生成的 CSV 与 summary 做离线分析，未连接或操作机器人。可复现报告见 [分析 JSON](../../docs/validation/run_history.md)。
 
 | 事实 | 数值/结论 |
 | --- | --- |
@@ -317,7 +319,7 @@ python -m dexretarget \
 
 照片显示主要负载位于法兰外侧，灵巧手沿外侧明显延伸；但辨识结果的法兰 Z=+8.61 mm，重心距法兰原点仅约 55 mm。单张透视照片缺少精确尺寸和法兰原点标记，不能因此断言结果错误，也无法据此算出正确重心。
 
-按本次 home 初始记录中的 R_base_flange（TCP 为零，故与法兰重合），重心在基座坐标中的**相对法兰偏移**为 [+49.40,+12.18,+20.30] mm。最后一项表示在配置的正装、基座 +Z 向上假设下，推算重心在法兰上方约 20 mm；这是需要与真实装配核对的疑点，不是照片测量结果。原始矩阵与计算见 [坐标审查 JSON](../../docs/validation/payload_coordinate_audit_20261023.json)。
+按本次 home 初始记录中的 R_base_flange（TCP 为零，故与法兰重合），重心在基座坐标中的**相对法兰偏移**为 [+49.40,+12.18,+20.30] mm。最后一项表示在配置的正装、基座 +Z 向上假设下，推算重心在法兰上方约 20 mm；这是需要与真实装配核对的疑点，不是照片测量结果。原始矩阵与计算见 [坐标审查 JSON](../../docs/validation/run_history.md)。
 
 此外，baseFrame 为单位阵只证明 SDK 用户定义的基座变换，不能独立证明控制器内部安装/重力方向设置正确。尚未取得该内部配置，不能把打印 UPRIGHT 当作完整动力学安装验证。
 

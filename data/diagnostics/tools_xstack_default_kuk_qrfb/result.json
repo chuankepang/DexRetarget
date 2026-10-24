@@ -1,7 +1,0 @@
-{
-  "project": "xstack_default",
-  "scope": "load definitions only while off/idle; never ppToMain/runProject/power/tool setters",
-  "exit_code": 1,
-  "stdout": "robot=xMatePro3 controller=2.3.2 SDK=0.3.4\npower_enum=1 operation_enum=0\nACTIVE SDK TOOLSET (name not returned by this API)\n  mass_kg=0\n  cog_m=[0, 0, 0]\n  inertia_kg_m2=[0, 0, 0]\n  TCP_translation_m=[0, 0, 0]\n  TCP_rpy_rad=[0, -0, 0]\nTemporarily selecting NrtRLTask for saved-tool queries; tasks will never be run.\nLoading definitions for project=xstack_default tasks=(NO execution)\nRestored SDK NrtCommand mode (motor power unchanged).\n",
-  "stderr": "READ FAILED: loadProject definitions only: 参数错误,参数类型或个数错误\n"
-}

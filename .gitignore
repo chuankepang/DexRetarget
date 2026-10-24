@@ -39,3 +39,10 @@ data/calibration/
 !.env.example
 .github-auth/
 rokae/third_party/official_sdk_audit/*.zip
+
+# Independent official SDK checkouts and their platform release binaries.
+/xCoreSDK-CPP/
+/xCoreSDK-Python/
+
+# Generated robot diagnostics and smoke results; conclusions belong in docs/validation/run_history.md.
+data/diagnostics/

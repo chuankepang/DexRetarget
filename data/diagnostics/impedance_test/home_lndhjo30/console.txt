@@ -1,5 +1,0 @@
-Robot=xMatePro3 controller=2.3.2 SDK=0.3.4
-Active controller mass=0.939386 kg; requested=0.939386 kg
-Applying calibrated mass/CoM; preserving controller inertia (zero is unverified).
-Official RT MoveJ at speed scale 0.05 to requested home. No impedance is started.
-Home complete; power-off requested and checked.

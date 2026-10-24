@@ -64,6 +64,6 @@ python -m pytest -q tests/test_rokae_native_loading.py \
 python -B tools/check_project.py
 ```
 
-本轮原生相关测试 **37 passed，另有 9 个子测试通过**；完整测试 **139 passed、1 failed、0 skipped**，另有 9 个子测试通过。机器可读证据见[本次验证记录](../../docs/validation/rokae_x86_20261022.json)。原重构报告中的 10 项跳过属于修复前的历史结果；本次已真实执行它们。唯一失败仍是既有 `test_init_nrt_speed_is_independent_and_conservative`：SDK 速度 250 不满足测试要求小于 100，未改物理速度或放宽断言。
+本轮原生相关测试 **37 passed，另有 9 个子测试通过**；完整测试 **139 passed、1 failed、0 skipped**，另有 9 个子测试通过。机器可读证据见[本次验证记录](../../docs/validation/run_history.md)。原重构报告中的 10 项跳过属于修复前的历史结果；本次已真实执行它们。唯一失败仍是既有 `test_init_nrt_speed_is_independent_and_conservative`：SDK 速度 250 不满足测试要求小于 100，未改物理速度或放宽断言。
 
 `PREEMPT_RT` 警告不是此次加载错误的原因。普通内核的实际 1 ms 回调时序、设备网络、真机初始化/home、位置/阻抗运行仍须按[硬件验收流程](commissioning.md)单独验证。

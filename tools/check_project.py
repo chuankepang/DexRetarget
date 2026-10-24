@@ -13,6 +13,8 @@ from urllib.parse import unquote
 
 ROOT=Path(__file__).resolve().parents[1]
 EXCLUDED={'.git','.agents','.aws','.codex','__pycache__','.pytest_cache','assets','sdk','third_party','camera_tests','raw','lerobot','build','logs'}
+# Official SDK checkouts are upstream reference material, not project-owned code.
+EXCLUDED.update({'xCoreSDK-CPP', 'xCoreSDK-Python'})
 COMPAT={'dexretarget/dataset/__main__.py','dexretarget/dataset/runtime.py','dexretarget/dataset/cameras.py','dexretarget/dataset/simulation.py'}
 
 
