@@ -19,6 +19,7 @@ def configured_realtime(args, robot_config, safety_config):
     for name in ['workspace_min', 'workspace_max']:
         values[name] = tuple(_config_value(getattr(args, 'arm_' + name), safety_config, name))
     values.update(
+        response_hz=float(safety_config.get('response_hz', 0.0)),
         control_hz=float(robot_config['control_hz']),
         hold_timeout=float(_config_value(args.arm_tracking_timeout, safety_config, 'hold_timeout')),
         stop_timeout=float(_config_value(args.arm_stop_timeout, safety_config, 'stop_timeout')),

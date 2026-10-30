@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import time
 
 from rokae.control.command import EECommand, PathSegment
 from rokae.control.controllers.base import ControllerBase
@@ -65,6 +66,14 @@ class PositionController(ControllerBase):
             control_mode=self.backend,
             kinematics=self.kinematics,
         )
+        if self.ik is not None:
+            # Native startup may take time and narrows the effective limits.
+            # Seed from its actual initial command, not a preflight-era state.
+            try:
+                self.ik.reset(self.driver.get_command_joints())
+            except Exception:
+                self.driver.stop()
+                raise
         self.state = "running"
 
     def set_target(self, command: EECommand) -> bool:
@@ -87,7 +96,10 @@ class PositionController(ControllerBase):
                 return accepted
             if self.ik is None:
                 raise RuntimeError("Pinocchio teleop has no IK solver")
+            started = time.monotonic()
             joints = self.ik.step(command.pose, dt)
+            if self.timing is not None:
+                self.timing.record('arm_ik', time.monotonic() - started)
             accepted = bool(
                 self.driver.set_target_joints(
                     joints,

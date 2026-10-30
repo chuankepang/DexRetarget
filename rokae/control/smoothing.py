@@ -1,9 +1,10 @@
 """1 kHz joint reference filter and jerk-limited servo.
 
-The servo is the scalar form of the Cartesian overdamped limiter already used
-by the xCore callback: a low-passed reference, then velocity, acceleration and
-jerk limits with a braking term. The same recurrence is implemented in
-``JointRealtimeCore`` so a Python simulation and the robot callback agree.
+Positive response_hz selects a third-order reference tracker with acceleration
+feedback and bounded bandwidth; zero preserves the legacy second-order tracker.
+Both use a low-passed reference and velocity/acceleration/jerk limits. This is
+reference generation, not the robot's physical impedance or damping controller.
+The recurrence matches ``JointRealtimeCore`` for offline verification.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ class JointStreamConfig:
     stop_timeout: float = 0.60
     max_source_age: float = 0.20
     future_tolerance: float = 0.05
+    response_hz: float = 0.0
 
     @classmethod
     def from_limits(cls, limits: StreamLimits) -> "JointStreamConfig":
@@ -48,9 +50,12 @@ class JointStreamConfig:
             stop_timeout=float(limits.stop_timeout),
             max_source_age=float(limits.max_source_age),
             future_tolerance=float(limits.future_tolerance),
+            response_hz=float(limits.response_hz),
         )
 
     def validate(self) -> None:
+        if not math.isfinite(self.response_hz) or not 0 <= self.response_hz <= 5:
+            raise ValueError("response_hz must be finite and in [0, 5]")
         vectors = (
             self.max_velocity,
             self.max_acceleration,
@@ -209,19 +214,28 @@ class JointStream:
         error = self.filtered - self.position
         error = np.where(np.abs(error) < self.config.deadband, 0.0, error)
         natural = np.minimum(
-            2.0 * self.config.max_acceleration / self.config.max_velocity,
+            (2.0 * math.pi * self.config.response_hz if self.config.response_hz > 0
+             else 2.0 * self.config.max_acceleration / self.config.max_velocity),
             0.5 / dt,
         )
-        desired_acceleration = np.clip(
-            natural * natural * error - 2.0 * _ZETA * natural * self.velocity,
-            -self.config.max_acceleration,
-            self.config.max_acceleration,
-        )
-        jerk = np.clip(
-            (desired_acceleration - self.acceleration) / dt,
-            -self.config.max_jerk,
-            self.config.max_jerk,
-        )
+        if self.config.response_hz > 0:
+            # Third-order reference tracking includes acceleration feedback.
+            # Reduce bandwidth for large errors/state derivatives before jerk
+            # saturation; merely increasing a second-order gain can oscillate.
+            natural = np.minimum.reduce([
+                np.full(self.config.dof, natural),
+                np.cbrt(2*self.config.max_jerk / np.maximum(np.abs(error), 1e-12)),
+                np.sqrt(2*self.config.max_jerk / np.maximum(3*np.abs(self.velocity), 1e-12)),
+                2*self.config.max_jerk / np.maximum(3*np.abs(self.acceleration), 1e-12)])
+            jerk = np.clip(natural**3*error - 3*natural**2*self.velocity
+                           - 3*natural*self.acceleration,
+                           -self.config.max_jerk, self.config.max_jerk)
+        else:
+            desired_acceleration = np.clip(
+                natural * natural * error - 2.0 * _ZETA * natural * self.velocity,
+                -self.config.max_acceleration, self.config.max_acceleration)
+            jerk = np.clip((desired_acceleration - self.acceleration) / dt,
+                           -self.config.max_jerk, self.config.max_jerk)
         self.acceleration = np.clip(
             self.acceleration + jerk * dt,
             -self.config.max_acceleration,

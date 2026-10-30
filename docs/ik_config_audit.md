@@ -1,84 +1,126 @@
-# VR 逆运动学与配置逐项审查
+# 运动学、逆解与配置审查
 
-## 当前执行的逆解
+更新：2026-10-30。跨项目范式、论文与公司报告见[relatedworks.md](../relatedworks.md)。本轮实现模型一致性检查、有效限位统一和冗余策略改进；保留现有手腕映射、默认 Pinocchio 路线、原生 SDK 0.3.4、负载与阻抗参数。
 
-默认 `config/robots/rokae.yaml: control.mode=pinocchio`，Cup 未覆盖 `teleop.arm_control`。
-实际调用链：Quest 相对目标 → PositionController.set_target → 本项目 DifferentialIK.step → set_target_joints → 原生 JointStream → ROKAE jointPosition。
-Pinocchio 提供正解、雅可比和 SE(3) 运算；逆解控制策略是本项目实现，**不是 ROKAE 官方 IK，也不是直接调用一个 Pinocchio 完整逆解器**。
-每个新腕部样本推进一次微分 IK；1 kHz 是后面的参考平滑/硬件回调频率。
+后续同日的链路优化、IK 等价计算复用、`response_hz` 参数和最新 **416 项测试 / 9 项 subtest** 结果见[跟随与延迟审查](teleop_latency_review.md)。下文较早的测试数字是当时审查记录；腕部映射未改变。
 
-另一条 `--arm-control cartesian` 路线把末端目标发到 xCore cartesianPosition，由控制器处理笛卡尔运动。本项目七轴位置路线启动时读取 `elbow_m`，之后显式发送固定 `command.elbow` / `hasElbow`。不是每次按 e 都重新读取臂角。
-阻抗路线不固定 hasElbow；不能将阻抗自由度策略误认为当前位置路线的行为。
-
-ROKAE SDK 0.3.4 本地头文件区分两类接口：
-
-- `Model_T::calcIk(CartesianPosition, ec)`：控制器模型接口，输入末端相对外部参考系的位姿。本项目 Python/C++ 桥目前没有暴露逆解，只暴露了 `calculate_fk`。
-- `xMateModel::getJointPos(cartPos, elbow, jntInit, jntPos)`：条件编译的主机模型接口，输入**法兰**位姿、臂角和初始关节角，选择邻近解，返回不可达、跳变量/速度、限位或奇异等错误码。
-- 当前 x86 构建链接官方 `nomodel` 库，没有启用 `XMATEMODEL_LIB_SUPPORTED`；不能因头文件存在就宣称官方主机 IK 已启用，也不能将控制器请求未经耗时测量放进 1 ms 回调。
-
-[ROKAE 官方概念说明](https://docs.rokae.com/docs/)定义 elbow 为臂平面相对参考平面的夹角，**不是第七轴角度**。
-在线[SDK 方法文档](https://docs.rokae.com/docs/SDK/cpp/cpp_method/)为 0.7.x；接口可用性以本仓库 0.3.4 头文件及实际链接选项为准，未进行官方 IK 实机性能比较。
-
-## 冗余解如何指定
-
-一般非奇异位形中，7 轴跟踪 6 维末端任务，剩一个冗余自由度。当前不是显式给定 elbow，而是副任务投影：
+## 实际数据流
 
 ```text
-J# = Jᵀ (J Jᵀ + λ² I)⁻¹
-N  = I - J# J
-dq = J# error_step + N secondary_velocity * dt
-secondary_velocity = posture + joint_limit_repulsion + bend_joint_repulsion
+Quest UDP / USB TCP → 新鲜度与臂手使能门 → RelativePoseMapper
+  → EECommand（base_T_TCP 位姿目标）
+  → PositionController → DifferentialIK（每个新目标一步）
+  → set_target_joints → 原生 JointRealtimeCore（1 kHz）
+  → SDK jointPosition → 机器人
 ```
 
-- 姿态参考：`config/models/xmate_er_pro_7.yaml: neutral_position`；`posture_gain=1.2`。
-- 关节限位排斥：`limit_gain=4.0`，`limit_margin=0.17 rad`，依据主机模型上下界。
-- J2/J4/J6 远离 0 的启发式：`singularity_gain=0.8`；不能保证所有几何奇异都被规避。
-- 副任务总速度投影前限制为 `null_max_speed=0.6 rad/s`；之后还有逐轴限速与关节位置截断。
-- `e/c` 或跟踪恢复重置积分状态到当前命令关节角，但**不会把 neutral_position 改成当前关节角**。Cup home 也不会改变 neutral。
+`tool_relative`、`wrist_to_tool_rotation`、位置轴变换、平移倍率与旋转倍率保持原值。IK 不读欧拉角，也不改手腕到工具的轴线关系。`cartesian` 和 `impedance` 后端分别由控制器跟踪位姿/平衡位姿，不经过本项目主机 IK。手部重定向、采集结构和时间戳接口未修改。
 
-λ>0 时 N 不是严格零空间投影，J N 通常非零；副任务可能引入末端漂移，之后逐轴截断也会破坏理想任务优先级。
-手不动而肘缓慢调整可能来自副任务；不应把它直接判定成 VR 抖动。
+## 三项实现
 
-## 离线量化与质量判断
+### 1. 多姿态模型一致性检查
 
-运行 `python tools/diagnostics/audit_rokae_ik.py --output docs/validation/ik_audit_20261022.json`。
-以下为 50 Hz、500 步、固定目标、同一个拟合模型计算目标与误差；不包含真实机器人、1 kHz 平滑、通信或标定误差。
+启动原生 Pinocchio 关节控制前：读取并合并软限位 → 检查当前关节有效 → 查询官方 FK → 比较当前实测 TCP → 确认查询期间关节位置没有明显变化 → 才调用原生启动。
 
-| 场景 | 10 秒后位置残差 | 姿态残差 | 关节总位移范数 |
+采样包含当前关节、历史 neutral（裁到有效限位内）、各轴 ±0.15 rad，共 16 个虚拟关节配置。只计算这些点的 FK，**不会运动到采样点**。非有限/非刚体变换、模型失配、软限位关闭或查询期间运动均阻止启动。
+
+SDK `calcFk` 返回 ref_T_end；新增 `calculate_fk_in_base` 显式计算：
+
+```text
+base_T_end = inverse(world_T_base) @ world_T_ref @ ref_T_end
+```
+
+旧 `calculate_fk` 的外部参考系语义保留。工具 TCP 必须和 RT `tcpPose_m` 一致；当前实测对照用于检查这一点。没有拟合一个额外刚体变换去掩盖错误的 TCP / base / 安装旋转。
+
+配置只在 `config/models/xmate_er_pro_7.yaml: validation`。位置 20 mm、姿态 0.10 rad 保留原容差，只扩大检查覆盖；它们是启动一致性门槛，**不能当作亚毫米标定精度证明**。四段几何长度仍是既有拟合值，没有在控制柜关机时猜测厂家参数。
+
+### 2. IK 与伺服共用有效边界
+
+`effective_min=max(model_min,controller_min)`，`effective_max=min(model_max,controller_max)`。
+同一结果更新模型位置界、Pinocchio 模型界、`StreamLimits`，再构造原生 `JointRealtimeConfig`。不放宽任何控制器边界；无交集、失序/非有限边界和界外初始状态报错。运行期间不热修改边界，控制器配置改变后应重新启动。
+
+速度/加速度/jerk 的既有设置不变。IK 在每步位置/速度盒内先整体缩放主任务，再按剩余可用范围整体缩放副任务；避免逐轴截断改变任务方向。它是保守的可行步生成，不等于完整约束 QP 的全局最优解，边界处仍可能需要离合或换姿态。
+
+### 3. 明确零空间参考与任务优先级
+
+默认 `ik.posture_reference: initial`，每次使能、c、跟踪恢复从当前原生命令关节重置参考；`model` 可使用保留的历史 neutral。Cup home 不再被误认为隐式零空间参考，也不在 task 中重复保存同一套 IK 参数。
+
+```text
+primary = Jᵀ (J Jᵀ + λ²I)⁻¹ error_step
+B = 6×7 雅可比 SVD 的结构冗余核基（7-6 个方向）
+secondary_step = B Bᵀ secondary_velocity * dt
+```
+
+主任务仍用自适应 DLS；副任务改用严格几何核投影，避免旧 `I-J#J` 在 λ>0 时的主任务泄漏。接近秩退化时平滑衰减副任务，不突然扩展零空间维度。关节限位排斥保留；J2/J4/J6 弯曲启发式仅在最小奇异值下降时平滑启用，不在正常静止姿态持续推肘。
+
+旧 neutral 和所有用户历史 home 注释保留。新的 `posture_reference` 只属于模型 IK 配置；默认缺少该字段的外部旧配置仍按 `model` 参考解析，但投影与边界算法使用当前实现。
+
+严格几何核是局部一阶概念，不保证有限步末端完全不变；奇异阈值仍来自平移/旋转混合雅可比，未做单位归一化。启发式不等于完整奇异规避或碰撞检测。当前没有全局最优保证。
+
+## Pinocchio 与官方能力取舍
+
+| 维度 | 本项目 Pinocchio + DifferentialIK | ROKAE 官方 |
+| --- | --- | --- |
+| 模型 | 四段拟合几何，新增多姿态官方 FK 一致性门；精度受模型/TCP 限制 | xMateModel 创建时读取控制器模型参数；是否包含全部个体标定需实测确认 |
+| 冗余 | 使能姿态参考、精确几何核、限位/近奇异副任务；可修改策略 | 主机 getJointPos 接受 elbow + seed，说明选邻近 seed 的解；本项目 Cartesian 位置路线固定启动 elbow |
+| 最优性 | 局部 DLS + 可行步生成；不是全工作区/全轨迹最优 | 邻近 seed 不等于最佳限位、可操作度或最小能耗；固定臂角可能排除其他可行解 |
+| 可用性 | 默认在用；不改现有映射 | 当前 nomodel 库有 calcFk/calcIk，但 Python 桥只新增了基座系 FK，没有接入官方 IK；完整 xMateModel 未启用 |
+| 时延 | 当前离线诊断单步约 0.1–0.25 ms（P95，随负载变化）；不含链路延迟 | 未完成同目标官方 IK 实测，不能宣称更快、更准 |
+
+接口依据：[本地匹配的官方 0.3.4 model.h](https://github.com/RokaeRobot/xCoreSDK-CPP/blob/77d2fd7546e657d4e66a82b29c2a5f21d01db3e3/include/rokae/model.h)、[官方模型示例](https://github.com/RokaeRobot/xCoreSDK-CPP/blob/main/example/xmatemodel_er3_er7p.cpp)。elbow 是臂角，不是第七轴角度。SDK calcIk 模型查询与 cartesianPosition 执行路线必须分开计时。
+
+[Pinocchio 官方 IK 示例](https://github.com/stack-of-tasks/pinocchio/blob/devel/examples/inverse-kinematics.py)包含 Jlog6 误差雅可比与收敛判据；本项目仍采用限速小步 CLIK，没有把该示例直接当成在线控制器。[官方零空间练习](https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/master/doxygen-html/md_doc_d_practical_exercises_3_invkine.html)说明了任务优先级和数值秩选择。
+
+官方 [CHANGELOG](https://github.com/RokaeRobot/xCoreSDK-CPP/blob/main/CHANGELOG.md) 的 0.7.0 引入 calcAllIkSolutions / DH 查询并要求 xCore ≥3.2.0；现场 2.3.2 不直接替换新版 SDK 或头文件。后续如评估官方 IK，使用同一批映射后的 TCP 目标，比成功率、模型残差、关节路径、限位裕量、奇异指标和耗时，而不是凭库名切换。
+
+## 离线证据与验证范围
+
+固定目标 50 Hz、10 秒，同一拟合模型：
+
+| 场景 | 修改前最大单轴偏移 | 修改后最大单轴偏移 | 含义 |
 | --- | --- | --- | --- |
-| 当前 neutral 保持 | 0.030 mm | 0.00043° | 0.00010 rad |
-| 偏离 neutral 的姿态保持 | 0.084 mm | 0.00202° | 0.09955 rad |
-| neutral 附近平移 [20,-10,15] mm | 0.039 mm | 0.00110° | 0.11711 rad |
-| 近伸直姿态平移 [10,0,-5] mm | 1.249 mm | 0.00797° | 0.66873 rad |
+| Cup home 保持 | 5.742731° | <0.000001° | 正常静止目标不再吸向旧 neutral |
+| 偏离 neutral 的保持姿态 | 3.855822° | <0.000001° | initial 参考按当前姿态建立 |
+| 近伸直姿态平移 [10,0,-5] mm | 26.488759° | 以当前诊断输出为准 | 奇异启发式已改变，不能只用偏移量评估全部性能 |
 
-此机器本次单步 P95 约 181–198 μs；这是离线耗时，不是实时最坏耗时保证。
-偏离 neutral 的保持场景说明末端基本不动时，关节仍会因副任务变化。
-近奇异案例起始最小奇异值约 0.00310，阻尼上升到约 0.1777，收敛质量下降；不能据四个案例声称全工作区都好/坏。
-起始 `||J N||` 在上述案例约 0.020–0.081；同点 SVD 严格核投影约 1e-16，仅为代数对照，没有替换在线算法。
+工具 X/Z ±90° 轨迹（4 秒渐变 + 8 秒保持）均能在拟合模型中收敛。新增两条测试从非零腕参考、实际映射矩阵开始，经 IK 和 C++ 1 kHz JointRealtimeCore，再用 FK 检查工具 Z ±90°：位置误差 <0.5 mm、角度误差 <0.1°，全程满足模拟的控制器有效关节边界。此阈值是模拟回归标准，不是真机误差。
 
-原始结果见 [JSON](validation/run_history.md)。当前证据不支持“算得慢是主要原因”；**模型准确度、滤波链、奇异区和参考策略更值得优先测量**。
+已完成 C++ 桥构建，仍链接原 0.3.4 nomodel SDK。最终 `pytest -q`：**398 passed，9 subtests passed，26.98 s**，没有跳过测试。覆盖虚拟 FK 错误只在非当前点出现、非法变换、有效限位传到原生配置、失败/运动时禁止启动、边界向内恢复、50/90/100 Hz 零空间保持、完整工具 Z ±90° 映射链及原有测试。
 
-## 仍需解决的质量问题与优化顺序
+合成相机 + 伪 Quest UDP + Inspire PTY + mock arm 的完整入口检查：
 
-1. **模型/TCP 校验优先**：当前四个连杆长度来自拟合，不是厂家标定。启动只在一个姿态检查 FK，容差 20 mm / 0.10 rad（约 5.73°）；一个点通过不能证明整片空间准确。应在多个已知关节姿态用官方 FK 做只读比较，统一 base、法兰和工具 TCP，再决定是否替换模型。当前不能宣称机器人末端达到上述亚毫米精度。
-2. **IK 与伺服限位一致**：真实关节流与控制器软限位取交集，但 IK 模型仍使用 ±170/120/360° 的本地边界。现场曾读到更窄的 ±165/115/355°。靠近限位时，IK 可能继续向伺服拒绝/截断的方向积分。后续应把已验证的有效边界同步给 IK，不应放宽控制器限制掩盖问题。
-3. **明确零空间意图**：可选择保持使能时姿态、任务指定参考姿态，或显式臂角连续调度。当前仅支持修改模型的固定 neutral，不存在任务 home 自动变零空间参考的功能。任务参考应属于 task；模型中保留默认值。
-4. **改善任务优先级**：在仿真比较严格核投影/分层 QP、关节限位/速度约束与方向统一缩放。阻尼、自适应秩、米与弧度的权重必须一起评估；不能只把阻尼调小。当前 SE(3) 小步近似没有完整 Jlog 修正，较大姿态误差也应专项测试。[Pinocchio 官方 IK 示例](https://github.com/stack-of-tasks/pinocchio/blob/devel/examples/inverse-kinematics.py)展示了误差雅可比修正及收敛判据，不能直接把该示例当成已验证的机器人控制器。
-5. **可观察性与 A/B**：记录 σ_min、阻尼、IK 残差、目标关节/伺服命令/实测差和拒绝次数；用相同 VR 回放比较 pinocchio 与 cartesian。官方路线也会受固定臂角可达性/奇异影响，不保证切换后一定更好。
-6. **路线参数要分清**：当前 Pinocchio 路线不执行 safety 中的笛卡尔工作空间盒/平移滤波；它执行模型 IK 步长和关节流限制。模型 15 Hz 关节参考滤波与 SDK 30 Hz 设置可能共同影响延迟。此轮明确标注，不以参数名字相同暗示等价；碰撞避障并不存在。
+| 后端 | 成功 episode：总帧/有效帧 | 失败 episode：总帧/有效帧 | 缺失流 |
+| --- | --- | --- | --- |
+| cartesian | 141 / 121 | 24 / 24 | 无 |
+| pinocchio | 140 / 119 | 24 / 24 | 无 |
 
-本轮没有切换后端、替换主机模型、放宽限位或上线新的零空间算法。修复一个确定的恢复问题：`reset_tracking()` 现在同时清除上一帧时间戳，避免长暂停后的首个 IK 步长由暂停时长放大到 50 ms；恢复首步使用既有 20 ms 初始步长，并补充回归测试。
+覆盖 r 录制、s/f 保存、主动断流 HOLD、恢复重定参考、手动暂停、home 与退出；成功段有三段训练片段，无效帧来自主动断流/暂停，不跨间断拼接。原始 smoke episode 已按本次输出精确清理，保留此汇总，不删除既有采集数据。
 
-## 配置归属与清理
+Review 修复了：近奇异启发式在阈值处突变（改为平滑启用）；原生启动前后 IK 种子可能不一致（从原生命令重置）；无效增益/变换可能混入（增加校验）；模型参考越界（裁到同一有效界）。现有映射文件、机器人映射 YAML、任务 home/历史注释、SDK 库和阻抗参数均未修改。
 
-- `robots/rokae.yaml`：设备/默认控制/无任务启动，以及已明确标注的历史独立工具预设。
-- `tasks/cup.yaml`：Cup 指令、设备选择、采集引用、任务 home。相同的角度数值不意味着同一语义；home 不等于 IK neutral。
-- `models/xmate_er_pro_7.yaml`：主机模型、默认零空间参考、IK 和关节流参数。
-- `robot.manipulation_init` 原本是“工具朝下”的旧演示姿态名字，仅供 05 `--pose manipulation`、cup_flip、box_vertices 等使用；正式 Cup 采集从不读它。当前保存值已被改成腕部向前，原注释错误，已修正并保留原角度注释。未擅自恢复旧角度；要求工具朝下的演示仍可能拒绝它。保留该兼容字段是因为有实际调用者，不另设一个隐式 Cup home。
-- 任务 home 覆盖通用 init 的 enabled、joint_position、joint_speed、timeout、max_segment_delta；在线倍率仍继承 init。home.joint_tolerance_rad 是任务完成反馈检查，joint_waypoints 是任务回位路径。
-- 删除从未被 Python/C++ 读取的 `robot.sdk_callback_hz` 和 init 的三个 `min_*_bend` 字段（4 项）；它们并没有提供运行时保护。
-- 删除与全局 position 完全重复的 `tasks.cup.controller` / `tasks.box.controller`（2 项）。主遥操作解析器本来不传这些 demo task 名；任务覆写应使用 `teleop.arm_control`。旧外部配置的解析兼容代码仍保留。
-- 所有其他配置数值、Cup 新角度及历史角度注释保留；三份 YAML 的所有当前条目均加中文解释。下面逐项列出实际归属与生效条件。
+控制柜未开机，SDK 只读连接返回网络错误；用户确认暂不便连接，因此**未验证实际多姿态官方 FK、真实运动、接触阻抗或物理轴向**，没有把未执行项视为通过。模型一致性检查代码已完成，实际几何参数是否需要进一步标定，仍须开机后执行下方只读命令确认。
+
+已有两段 .96 kg、法兰中心 TCP 的历史 trace 中抽取 63 对 q/TCP 记录，拟合模型与记录 TCP 的最大差约 0.788 mm / 0.00975°；这只是已保存控制器状态的局部对照，不是本轮官方 FK 查询或物理标定验收。
+
+```bash
+conda activate dexteleop
+# 新增原生接口需重建；SDK 版本不变。
+bash rokae/build.sh
+# 离线，无硬件连接
+python tools/diagnostics/audit_rokae_ik.py
+python tools/diagnostics/check_rokae_orientation.py --include-ik
+# 控制柜开机、机器人静止时：只读 FK 对照，不上电、不发运动指令
+python rokae/control/examples/check_model.py --execute
+```
+
+## 配置归属
+
+- `config/robots/rokae.yaml`：设备、映射、默认控制、独立工具启动预设；本轮不改该文件的参数。
+- `config/tasks/cup.yaml`：任务指令、采集引用、home；本轮不改原 home 与历史注释。
+- `config/models/xmate_er_pro_7.yaml`：主机几何、IK / 零空间、模型验证和关节流参数，统一维护。
+- `manipulation_init` 是旧独立演示的兼容预设，home 是任务回位目标，neutral 是可选副任务参考；不能混用。
+
+下列为现有关键配置清单。参数名相同不意味着跨后端同时生效。
 
 ### config/robots/rokae.yaml
 
@@ -187,12 +229,12 @@ secondary_velocity = posture + joint_limit_repulsion + bend_joint_repulsion
 | `d_ew` | 米；肘到腕长度，拟合值。 |
 | `d_wf` | 米；腕到模型 TCP 的固定轴向偏移；不能替代实际工具 TCP 标定。 |
 | `singular_joints` | 从 0 开始的 J2/J4/J6 索引；副任务远离零角的启发式，不是完整奇异性判定。 |
-| `lower_deg` | 度；主机模型下界。真实关节流还与控制器软限位取交集；当前 IK 模型本身未同步该交集。 |
+| `lower_deg` | 度；主机模型下界。真机启动前与控制器软限位取交集，同步到 IK / Pinocchio / 原生关节流。 |
 | `upper_deg` | 度；主机模型上界；当前 ±170/120/360 与现场软限位不同，不得视为控制器设置。 |
 | `max_velocity` | rad/s，各关节上限；IK 每步和 1 kHz 关节流都使用。 |
 | `max_acceleration` | rad/s²，1 kHz 关节流使用；IK 自身不是加速度约束优化器。 |
 | `max_jerk` | rad/s³，1 kHz 关节流使用。 |
-| `neutral_position` | rad，固定零空间姿态参考；不随任务 home 或 e/c 自动改变，也不是动作命令。 |
+| `neutral_position` | rad，`posture_reference=model` 时的默认参考；`initial` 模式取每次重定参考时的关节姿态。 |
 | `stream.reference_cutoff_hz` | Hz，关节目标低通截止频率。 |
 | `stream.deadband` | rad，关节目标死区。 |
 | `stream.max_target_delta` | rad，允许的关节目标跳变量。 |
@@ -200,21 +242,17 @@ secondary_velocity = posture + joint_limit_repulsion + bend_joint_repulsion
 | `stream.stop_timeout` | 秒，原生关节流无新目标时 safe_stop；显式 hold 与断流 watchdog 是不同状态。 |
 | `stream.max_source_age` | 秒，关节流拒绝过期来源时间戳。 |
 | `stream.future_tolerance` | 秒，关节流来源时间戳的未来偏差容忍。 |
+| `validation.translation_tolerance_m` | 多姿态官方 FK 一致性位置容差，米；不是真机精度指标。 |
+| `validation.rotation_tolerance_rad` | 多姿态官方 FK 一致性角度容差，rad。 |
+| `validation.joint_offset_rad` | 当前关节两侧的虚拟 FK 采样偏移，rad；不执行运动。 |
+| `ik.posture_reference` | initial：使能/c/恢复时关节姿态；model：历史 neutral。仅决定副任务，不改变 VR 映射。 |
 | `ik.damping` | 基础阻尼 λ；矩阵中加 λ²I，越大通常越稳但跟随误差也可能增大。 |
 | `ik.damping_max` | 接近奇异时增大的阻尼上界。 |
 | `ik.singular_sigma` | 最小奇异值低于此阈值时增加阻尼；平移/旋转混合雅可比未做尺度归一化。 |
-| `ik.posture_gain` | 副任务趋向 neutral_position 的增益。 |
+| `ik.posture_gain` | 副任务趋向所选 posture_reference 的增益；初始参考/历史 neutral 二选一。 |
 | `ik.limit_gain` | 副任务远离模型关节限位的增益；不是硬约束。 |
-| `ik.singularity_gain` | 副任务推动 J2/J4/J6 离开零角的增益；不是保证全局无奇异。 |
+| `ik.singularity_gain` | 仅接近雅可比奇异时平滑启用的弯曲关节启发式增益；不保证全局无奇异。 |
 | `ik.null_max_speed` | rad/s，副任务速度向量的整体范数上限；投影前限幅。 |
 | `ik.limit_margin` | rad，接近模型限位时开始排斥的距离。 |
 | `ik.max_translation_speed` | m/s，将末端误差步长限制为速度×dt；与笛卡尔路线同名设置相互独立。 |
 | `ik.max_angular_speed` | rad/s，将旋转误差步长限制为角速度×dt。 |
-
-## 本轮验证与边界
-
-- 配置前后机器比较：机器人剩余 66 项、Cup 22 项、主机模型 29 项，共 117 个叶子条目；保留条目的解析值全部不变，仅删除上述 6 个无效/重复项。用户历史角度注释保留。
-- `python -m pytest -q`：214 passed，9 subtests passed，7.80 s；包括新增恢复时间基准测试。
-- `python tools/check_project.py`：184 个自有 Python 文件、42 个核心模块、134 个本地文档链接，无错误。
-- `tests/check_capture_entrypoint.py --synthetic-cameras --seconds 2`：完整伪 Quest UDP / Inspire PTY / mock Pinocchio / 合成相机链路通过。主动断流 HOLD、无需 e 恢复、手动暂停、home、成功/失败保存及退出均验证。第一段 145 帧中 121 帧有效并分成三个训练段，第二段 24/24 帧有效；无缺失流。无效帧来自主动断流/暂停，未伪装成有效数据。报告位于 `docs/validation/ik_review_entrypoint_20261022.json`。
-- 未连接/移动真实机器人，未测官方 IK 时延或精度，未验证真实碰撞/负载/工具标定；上文剩余改进项不因离线测试通过而视为解决。

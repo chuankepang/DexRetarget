@@ -135,6 +135,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quest-reference-timeout", type=float, default=15.0)
     parser.add_argument("--arm-print-hz", type=float, default=10.0)
     parser.add_argument("--arm-record", type=Path, default=None, metavar="JSONL")
+    parser.add_argument("--timing-report", type=Path, default=None, metavar="JSON",
+                        help="Save bounded host latency statistics on exit; no robot motion added")
     parser.add_argument("--task-config", type=Path, help="Task YAML: instruction, teleop, collection reference and home")
     parser.add_argument("--capture", action=argparse.BooleanOptionalAction, default=None, help="Enable explicit multi-episode synchronized dataset capture")
     parser.add_argument("--task", default="", help="Language instruction overriding the task profile")

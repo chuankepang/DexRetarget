@@ -47,4 +47,5 @@ python -m dexretarget.dataset --help
 [操作手册](README_QUEST3_INSPIRE_ROKAE.md) · [配置](docs/configuration.md) ·
 [架构](docs/architecture.md) · [数据格式](data/README.md) · [验证与迁移](docs/layout_tracking_review.md)
 
+[遥操作范式调研](relatedworks.md) · [运动学与 IK 审查](docs/ik_config_audit.md) ·
 [原项目与引用](docs/retargeting.en.md) · [MIT License](LICENSE)

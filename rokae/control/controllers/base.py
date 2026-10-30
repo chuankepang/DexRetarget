@@ -40,6 +40,7 @@ class ControllerBase:
         self.state = "idle"
         self._lock = threading.Lock()
         self.last_accepted_pose = None
+        self.timing = None
 
     @property
     def kind(self) -> str:

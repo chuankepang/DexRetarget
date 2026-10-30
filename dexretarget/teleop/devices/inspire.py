@@ -3,6 +3,7 @@
 import time
 import threading
 import struct
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -11,7 +12,6 @@ from .base import HandOutput
 _INSPIRE_CHANNEL_INDICES = [4, 6, 2, 0, 9, 8]
 _INSPIRE_CHANNEL_MAX_RAD = [1.47, 1.47, 1.47, 1.47, 0.6, 1.308]
 _INSPIRE_CHANNEL_INVERT = [True, True, True, True, True, True]
-_INSPIRE_SERIAL_RESPONSE_TIMEOUT_S = 0.1
 
 
 def _inspire_retarget_to_real(retarget_output: np.ndarray) -> list[int]:
@@ -56,29 +56,18 @@ class InspireSerialOutput(HandOutput):
         self._capture_timeout = 0.025
         print(f"Connected to Inspire hand serial at {port_name} @ {baudrate} baud.")
 
-    def _read_response(self) -> bytes:
-        deadline = time.time() + _INSPIRE_SERIAL_RESPONSE_TIMEOUT_S
-        input_bytes = bytearray()
-        while time.time() < deadline:
-            chunk = self._port.read(self._port.in_waiting or 1)
-            if chunk:
-                input_bytes += chunk
-            else:
-                break
-        return bytes(input_bytes)
-
     @staticmethod
     def _encode_channels(channels: list[int]) -> list[int]:
         if len(channels) != 6:
             raise ValueError(f"Inspire hand expects 6 channels, got {len(channels)}")
         return [int(np.clip(round(ch / 2.0), 0, 1000)) for ch in channels]
 
-    def send(self, qpos, joint_names):
+    def send(self, qpos, joint_names, *, gate=None, source_timestamp=None):
         channels = _inspire_retarget_to_real(qpos)
         encoded = self._encode_channels(channels)
-        return self.send_angles(encoded)
+        return self.send_angles(encoded, gate=gate, source_timestamp=source_timestamp)
 
-    def send_angles(self, angles):
+    def send_angles(self, angles, *, gate=None, source_timestamp=None):
         """Send native ANGLE_SET registers without applying retargeting twice."""
         values = np.asarray(angles, dtype=float)
         if values.shape != (6,) or not np.all(np.isfinite(values)) or np.any((values < 0) | (values > 1000)):
@@ -91,10 +80,19 @@ class InspireSerialOutput(HandOutput):
         checksum = sum(packet[2:2 + 0x0F + 3])
         packet.append(checksum & 0xFF)
         with self._io_lock:
-            timestamp = time.monotonic()
-            written = self._port.write(packet)
-            if written != len(packet):
-                raise IOError("Incomplete Inspire command write")
+            # Wait for serial ownership without blocking arm publication. Only
+            # the write is serialized with pause/home; ACK waiting is not.
+            with gate.lock if gate is not None else nullcontext():
+                if gate is not None and (not gate.enabled or gate.tracking_held):
+                    return None
+                timestamp = time.monotonic()
+                if source_timestamp is not None:
+                    from ..tracking import fresh_timestamp
+                    if not fresh_timestamp(source_timestamp, timestamp, .20):
+                        return None
+                written = self._port.write(packet)
+                if written != len(packet):
+                    raise IOError("Incomplete Inspire command write")
             if self._feedback_enabled:
                 # A transmitted target is not called accepted until the hand
                 # returns the matching write acknowledgement.
@@ -103,7 +101,13 @@ class InspireSerialOutput(HandOutput):
                     raise IOError("Inspire rejected ANGLE_SET")
                 acknowledged = True
             else:
-                self._read_response()
+                # Exit on the complete ACK, not an extra serial silence timeout.
+                # Legacy no-capture mode still tolerates an absent ACK and does
+                # not label the target as acknowledged in the dataset contract.
+                try:
+                    self._read_packet(0x12, 1486)
+                except TimeoutError:
+                    pass
                 acknowledged = False
         return {"angle": np.asarray(encoded, dtype=np.int16), "timestamp": timestamp,
                 "acknowledged": acknowledged}

@@ -38,6 +38,7 @@ class ImpedanceController(ControllerBase):
     def set_target(self, command: EECommand) -> bool:
         with self._lock:
             self._require_running()
+            started = time.monotonic()
             measured = np.asarray(self.driver.get_tcp_pose(), dtype=np.float64)
             limited = limit_equilibrium(
                 command.pose,
@@ -45,6 +46,8 @@ class ImpedanceController(ControllerBase):
                 self.spec.max_equilibrium_translation,
                 self.spec.max_equilibrium_rotation,
             )
+            if self.timing is not None:
+                self.timing.record('impedance_state_and_limit', time.monotonic() - started)
             accepted = bool(
                 self.driver.set_target_pose(
                     limited,

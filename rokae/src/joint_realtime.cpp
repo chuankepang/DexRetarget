@@ -36,6 +36,9 @@ std::vector<double> checked_joints(const std::vector<double>& joints,
 }  // namespace
 
 void JointRealtimeConfig::validate() const {
+  if (!std::isfinite(response_hz) || response_hz < 0.0 || response_hz > 5.0) {
+    throw std::invalid_argument("response_hz must be finite and in [0, 5]");
+  }
   const std::size_t count = max_velocity.size();
   if (count < 1 || max_acceleration.size() != count || max_jerk.size() != count ||
       position_min.size() != count || position_max.size() != count) {
@@ -197,15 +200,27 @@ class JointRealtimeCore::Impl {
       }
       double error = filtered[index] - position[index];
       if (std::abs(error) < config.deadband) error = 0.0;
-      const double natural = std::min(
-          2.0 * config.max_acceleration[index] / config.max_velocity[index],
+      double natural = std::min(
+          config.response_hz > 0.0 ? 2.0 * kPi * config.response_hz :
+              2.0 * config.max_acceleration[index] / config.max_velocity[index],
           0.5 / dt);
-      const double desired_acceleration = clamp_scalar(
-          natural * natural * error - 2.0 * kDampingRatio * natural * velocity[index],
-          -config.max_acceleration[index], config.max_acceleration[index]);
-      const double jerk = clamp_scalar(
-          (desired_acceleration - acceleration[index]) / dt,
-          -config.max_jerk[index], config.max_jerk[index]);
+      double jerk;
+      if (config.response_hz > 0.0) {
+        const double twice_jerk = 2.0 * config.max_jerk[index];
+        natural = std::min({natural,
+            std::cbrt(twice_jerk / std::max(std::abs(error), 1e-12)),
+            std::sqrt(twice_jerk / std::max(3.0 * std::abs(velocity[index]), 1e-12)),
+            twice_jerk / std::max(3.0 * std::abs(acceleration[index]), 1e-12)});
+        jerk = clamp_scalar(natural * natural * natural * error -
+            3.0 * natural * natural * velocity[index] - 3.0 * natural * acceleration[index],
+            -config.max_jerk[index], config.max_jerk[index]);
+      } else {
+        const double desired_acceleration = clamp_scalar(
+            natural * natural * error - 2.0 * kDampingRatio * natural * velocity[index],
+            -config.max_acceleration[index], config.max_acceleration[index]);
+        jerk = clamp_scalar((desired_acceleration - acceleration[index]) / dt,
+            -config.max_jerk[index], config.max_jerk[index]);
+      }
       acceleration[index] = clamp_scalar(
           acceleration[index] + jerk * dt,
           -config.max_acceleration[index], config.max_acceleration[index]);

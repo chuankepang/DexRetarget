@@ -207,6 +207,10 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
     resources["keyboard"] = keyboard.close
 
     from dexretarget.teleop.loop import TeleopLoop
+    from dexretarget.teleop.timing import TimingStats
+    timing = TimingStats() if getattr(args, 'timing_report', None) else None
+    if arm_execution is not None:
+        arm_execution.timing = timing
     from .capture import CaptureObserver
     observer = CaptureObserver(collector) if collector else None
     loop = TeleopLoop(
@@ -214,6 +218,7 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
         arm_controller=arm_controller, execution=arm_execution,
         initial_command=latest_arm_command, sequence=arm_sequence,
         observer=observer, stop_event=stop_event, recenter_event=recenter_event,
+        timing=timing,
         debug=(lambda command, sequence: _record_command(record_file, command, sequence, arm_driver)) if record_file else None,
     )
 
@@ -300,8 +305,20 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
 
                 recovery.update(hand_fresh and wrist_fresh, now, hold=hold_tracking, resume=resume_tracking)
                 if qpos_to_send is not None and session.enabled and not session.tracking_held:
-                    assert hand_output is not None
-                    hand_result = hand_output.send(recovery.hand.target(qpos_to_send, now), joint_names)
+                    hand_target = recovery.hand.target(qpos_to_send, now)
+                else:
+                    hand_target = None
+
+            if hand_target is not None:
+                assert hand_output is not None
+                begin = time.monotonic()
+                hand_result = hand_output.send(hand_target, joint_names, gate=session,
+                                               source_timestamp=last_landmarks_timestamp)
+                if timing:
+                    timing.record('hand_serial_transaction', time.monotonic() - begin)
+                if hand_result is not None:
+                    if timing:
+                        timing.record('landmarks_receive_to_hand_write', hand_result['timestamp'] - last_landmarks_timestamp)
                     if observer:
                         observer.hand_target(hand_result, hand_command_count)
                     hand_command_count += 1
@@ -383,6 +400,19 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
             cleanup("arm disconnect", arm_driver.disconnect)
         if record_file is not None:
             cleanup("debug log", record_file.close)
+        if timing is not None:
+            report = {'schema': 'dexretarget.host_timing.v1', 'route': arm_control_mode,
+                      'transport': 'relay' if use_relay else args.quest3_protocol,
+                      'simulated_arm': bool(args.mock_rokae), 'metrics': timing.snapshot(),
+                      'scope': 'Host receive to publication only; excludes Quest exposure/inference, '
+                               'pre-receive transport, controller/actuator tracking and physical hand motion.'}
+            try:
+                args.timing_report.parent.mkdir(parents=True, exist_ok=True)
+                args.timing_report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+                print(f'Host timing report: {args.timing_report}')
+            except OSError as exc:
+                # Optional diagnostics must not mask the original control fault.
+                print(f'Host timing report could not be saved: {exc}', file=sys.stderr)
 
 
 def __getattr__(name):

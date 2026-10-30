@@ -27,6 +27,7 @@ def cpp_config(limits: JointStreamConfig):
     cfg.position_min = limits.position_min.tolist()
     cfg.position_max = limits.position_max.tolist()
     cfg.reference_cutoff_hz = limits.reference_cutoff_hz
+    cfg.response_hz = limits.response_hz
     cfg.deadband = limits.deadband
     cfg.max_target_delta = limits.max_target_delta
     cfg.hold_timeout = limits.hold_timeout

@@ -72,7 +72,7 @@ def test_cli_and_realtime_settings_match_pre_refactor_fixtures():
     parser = build_parser()
     actual = [{key: str(getattr(a,key)) if isinstance(getattr(a,key),Path) else getattr(a,key)
                for key in ['option_strings','dest','nargs','default','choices','required']}
-              for a in parser._actions if a.dest not in {'print_arm_config', 'config', 'quest3_usb', 'quest3_source', 'quest3_relay_socket'}]
+              for a in parser._actions if a.dest not in {'print_arm_config', 'config', 'quest3_usb', 'quest3_source', 'quest3_relay_socket', 'timing_report'}]
     assert json.loads(json.dumps(actual)) == json.loads((ROOT/'tests/fixtures/legacy_cli.json').read_text())
     fixture = json.loads((ROOT/'tests/fixtures/legacy_realtime.json').read_text())
     for case in fixture['cases']:
@@ -80,7 +80,9 @@ def test_cli_and_realtime_settings_match_pre_refactor_fixtures():
         for key,value in case['override'].items():
             setattr(args,key,value)
         result = configured_realtime(args,fixture['robot'],fixture['safety'])
-        assert json.loads(json.dumps(vars(result))) == case['expected']
+        actual = vars(result).copy()
+        assert actual.pop('response_hz') == 0.0  # Legacy configs preserve their recurrence.
+        assert json.loads(json.dumps(actual)) == case['expected']
 
 
 def test_resource_cleanup_continues_after_error_and_runs_once():
@@ -253,9 +255,10 @@ def test_control_target_and_timestamp_are_published_together_and_copied():
     from types import SimpleNamespace
     published=threading.Event()
     target=np.arange(6,dtype=np.float64)
+    source_timestamp = time.monotonic()
     class Input:
         def get_hand_tracking_data(self,hand):
-            return {'fingers':np.zeros((21,3)),'landmarks_timestamp':123.5,'wrist':None}
+            return {'fingers':np.zeros((21,3)),'landmarks_timestamp':source_timestamp,'wrist':None}
     class Retargeter:
         def retarget(self,points): return target
     class Observer:
@@ -269,7 +272,7 @@ def test_control_target_and_timestamp_are_published_together_and_copied():
             assert time.monotonic()<deadline
             time.sleep(.001)
         qpos,command,timestamp=loop.snapshot()
-        assert timestamp==123.5 and qpos.dtype==np.float32
+        assert timestamp==source_timestamp and qpos.dtype==np.float32
         np.testing.assert_equal(qpos,target)
         target[:]=0
         qpos[:]=-1

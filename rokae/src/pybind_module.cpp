@@ -88,6 +88,13 @@ py::dict state_dict(const RobotState& value) {
 PYBIND11_MODULE(_rokae_cpp, module) {
   module.doc() = "DexRetarget bridge for ROKAE xCoreSDK-CPP v0.3.4";
   module.attr("SDK_VERSION") = "0.3.4";
+  module.def("fk_pose_in_base", [](const py::array_t<double>& ref_T_end,
+                                    const py::array_t<double>& world_T_base,
+                                    const py::array_t<double>& world_T_ref) {
+    return numpy_from_pose(anydex::rokae_bridge::fk_pose_in_base(
+        pose_from_numpy(ref_T_end), pose_from_numpy(world_T_base),
+        pose_from_numpy(world_T_ref)));
+  });
   module.def("plan_disabled_soft_limit_recovery",
              &anydex::rokae_bridge::plan_disabled_soft_limit_recovery,
              py::arg("joints"), py::arg("limits"), py::arg("clearance_degrees") = 0.5);
@@ -97,6 +104,7 @@ PYBIND11_MODULE(_rokae_cpp, module) {
       .def_readwrite("nrt_online_speed_scale", &RealtimeConfig::nrt_online_speed_scale)
       .def_readwrite("translation_cutoff_hz", &RealtimeConfig::translation_cutoff_hz)
       .def_readwrite("rotation_cutoff_hz", &RealtimeConfig::rotation_cutoff_hz)
+      .def_readwrite("response_hz", &RealtimeConfig::response_hz)
       .def_readwrite("translation_deadband", &RealtimeConfig::translation_deadband)
       .def_readwrite("rotation_deadband", &RealtimeConfig::rotation_deadband)
       .def_readwrite("max_translation_speed", &RealtimeConfig::max_translation_speed)
@@ -162,6 +170,7 @@ PYBIND11_MODULE(_rokae_cpp, module) {
       .def_readwrite("position_min", &JointRealtimeConfig::position_min)
       .def_readwrite("position_max", &JointRealtimeConfig::position_max)
       .def_readwrite("reference_cutoff_hz", &JointRealtimeConfig::reference_cutoff_hz)
+      .def_readwrite("response_hz", &JointRealtimeConfig::response_hz)
       .def_readwrite("deadband", &JointRealtimeConfig::deadband)
       .def_readwrite("max_target_delta", &JointRealtimeConfig::max_target_delta)
       .def_readwrite("hold_timeout", &JointRealtimeConfig::hold_timeout)
@@ -221,6 +230,12 @@ PYBIND11_MODULE(_rokae_cpp, module) {
                                const std::vector<double>& joints) {
         Pose value;
         { py::gil_scoped_release release; value = self.calculate_fk(joints); }
+        return numpy_from_pose(value);
+      }, py::arg("joints"))
+      .def("calculate_fk_in_base", [](RokaeDriver& self,
+                                       const std::vector<double>& joints) {
+        Pose value;
+        { py::gil_scoped_release release; value = self.calculate_fk_in_base(joints); }
         return numpy_from_pose(value);
       }, py::arg("joints"))
       .def("get_soft_limits", &RokaeDriver::get_soft_limits)

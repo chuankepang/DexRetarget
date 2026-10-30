@@ -12,6 +12,10 @@ namespace anydex::rokae_bridge {
 
 using Pose = std::array<double, 16>;
 
+// Read-only FK coordinate conversion, also tested without a controller.
+Pose fk_pose_in_base(const Pose& ref_T_end, const Pose& world_T_base,
+                     const Pose& world_T_ref);
+
 struct ControllerLog {
   int id;
   std::string timestamp;
@@ -32,6 +36,7 @@ struct RealtimeConfig {
   double nrt_online_speed_scale{1.0};
   double translation_cutoff_hz{5.0};
   double rotation_cutoff_hz{5.0};
+  double response_hz{0.0};  // 0 preserves legacy a/v gain; >0 is reference servo bandwidth.
   double translation_deadband{0.001};
   double rotation_deadband{0.008};
   double max_translation_speed{0.15};
@@ -128,6 +133,7 @@ struct JointRealtimeConfig {
   std::vector<double> position_min;
   std::vector<double> position_max;
   double reference_cutoff_hz{15.0};
+  double response_hz{0.0};
   double deadband{1e-4};
   double max_target_delta{0.35};
   double hold_timeout{0.15};
@@ -205,6 +211,7 @@ class RokaeDriver {
   Pose get_tcp_pose();
   Pose get_base_frame();
   Pose calculate_fk(const std::vector<double>& joints);
+  Pose calculate_fk_in_base(const std::vector<double>& joints);
   std::pair<bool, std::vector<std::array<double, 2>>> get_soft_limits();
   std::vector<ControllerLog> get_controller_logs(unsigned count = 10, bool faults_only = false);
   Pose preview_nrt_cartesian_target(const Pose& base_T_tcp_target);

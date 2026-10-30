@@ -197,6 +197,9 @@ void RealtimeConfig::validate_impedance_load(
 }
 
 void RealtimeConfig::validate() const {
+  if (!std::isfinite(response_hz) || response_hz < 0.0 || response_hz > 5.0) {
+    throw std::invalid_argument("response_hz must be finite and in [0, 5]");
+  }
   const double positives[] = {
       translation_cutoff_hz, rotation_cutoff_hz, max_translation_speed,
       max_angular_speed, max_translation_acceleration,
@@ -269,6 +272,15 @@ void RealtimeConfig::validate() const {
       throw std::invalid_argument("workspace bounds must be finite and ordered");
     }
   }
+}
+
+Pose fk_pose_in_base(const Pose& ref_T_end, const Pose& world_T_base,
+                     const Pose& world_T_ref) {
+  validate_pose(ref_T_end, "ref_T_end");
+  validate_pose(world_T_base, "world_T_base");
+  validate_pose(world_T_ref, "world_T_ref");
+  return pose_array(pose_matrix(world_T_base).inverse() *
+                    pose_matrix(world_T_ref) * pose_matrix(ref_T_end));
 }
 
 Pose limit_equilibrium_pose(const Pose& desired, const Pose& measured,
@@ -410,19 +422,30 @@ class RealtimeCore::Impl {
                             Eigen::Vector3d& velocity,
                             Eigen::Vector3d& acceleration, double dt,
                             double max_velocity, double max_acceleration,
-                            double max_jerk, Eigen::Vector3d& step) {
-    // Overdamped position servo.  Merely limiting acceleration/jerk while
-    // aiming at error/dt has no braking term and creates a sustained limit
-    // cycle around a fixed Cartesian target.
+                            double max_jerk, double response_hz, Eigen::Vector3d& step) {
+    // Reference tracker, not physical impedance damping. Positive response_hz
+    // includes acceleration feedback; zero keeps the legacy recurrence.
     constexpr double kDampingRatio = 1.25;
-    const double natural_frequency = std::min(
-        2.0 * max_acceleration / max_velocity, 0.5 / dt);
-    const auto desired_acceleration = limited_norm(
-        natural_frequency * natural_frequency * error -
-            2.0 * kDampingRatio * natural_frequency * velocity,
-        max_acceleration);
-    const auto jerk =
-        limited_norm((desired_acceleration - acceleration) / dt, max_jerk);
+    double natural_frequency = std::min(
+        response_hz > 0.0 ? 2.0 * kPi * response_hz :
+            2.0 * max_acceleration / max_velocity, 0.5 / dt);
+    Eigen::Vector3d jerk;
+    if (response_hz > 0.0) {
+      // Acceleration feedback prevents the phase loss caused by clipping a
+      // second-order acceleration demand through a separate jerk integrator.
+      natural_frequency = std::min({natural_frequency,
+          std::cbrt(2.0 * max_jerk / std::max(error.norm(), 1e-12)),
+          std::sqrt(2.0 * max_jerk / std::max(3.0 * velocity.norm(), 1e-12)),
+          2.0 * max_jerk / std::max(3.0 * acceleration.norm(), 1e-12)});
+      jerk = limited_norm(natural_frequency * natural_frequency * natural_frequency * error -
+          3.0 * natural_frequency * natural_frequency * velocity -
+          3.0 * natural_frequency * acceleration, max_jerk);
+    } else {
+      const auto desired_acceleration = limited_norm(
+          natural_frequency * natural_frequency * error -
+              2.0 * kDampingRatio * natural_frequency * velocity, max_acceleration);
+      jerk = limited_norm((desired_acceleration - acceleration) / dt, max_jerk);
+    }
     acceleration = limited_norm(acceleration + jerk * dt, max_acceleration);
     velocity = limited_norm(velocity + acceleration * dt, max_velocity);
     step = velocity * dt;
@@ -485,13 +508,13 @@ class RealtimeCore::Impl {
                   linear_velocity, linear_acceleration, dt,
                   config.max_translation_speed,
                   config.max_translation_acceleration,
-                  config.max_translation_jerk, linear_step);
+                  config.max_translation_jerk, config.response_hz, linear_step);
     const Eigen::Vector3d angular_error = rotation_vector(
         pose.topLeftCorner<3, 3>().transpose() * filtered.topLeftCorner<3, 3>());
     Eigen::Vector3d angular_step;
     bounded_state(angular_error, angular_velocity, angular_acceleration, dt,
                   config.max_angular_speed, config.max_angular_acceleration,
-                  config.max_angular_jerk, angular_step);
+                  config.max_angular_jerk, config.response_hz, angular_step);
 
     pose.topRightCorner<3, 1>() += linear_step;
     pose.topLeftCorner<3, 3>() =
@@ -612,6 +635,7 @@ class SessionBase {
   virtual Pose tcp_pose() = 0;
   virtual Pose base_frame() = 0;
   virtual Pose calculate_fk(const std::vector<double>&) = 0;
+  virtual Pose calculate_fk_in_base(const std::vector<double>&) = 0;
   virtual std::pair<bool, std::vector<std::array<double, 2>>> soft_limits() = 0;
   virtual std::vector<ControllerLog> controller_logs(unsigned, bool) = 0;
   virtual Pose preview_nrt_cartesian_target(const Pose&) = 0;
@@ -771,6 +795,21 @@ class Session final : public SessionBase {
         result.trans[0], result.trans[1], result.trans[2],
         result.rpy[0], result.rpy[1], result.rpy[2]}};
     return pose_from_posture(xyz_rpy);
+  }
+
+  Pose calculate_fk_in_base(const std::vector<double>& joints) override {
+    // calcFk returns ref_T_end, not base_T_end. Preserve calculate_fk's public
+    // semantics and expose a separate frame-explicit read-only query.
+    const Pose ref_T_end = calculate_fk(joints);
+    std::error_code ec;
+    const auto active = robot_->toolset(ec);
+    check_ec(ec, "toolset(FK)");
+    const auto base_values = robot_->baseFrame(ec);
+    check_ec(ec, "baseFrame(FK)");
+    const Pose result = fk_pose_in_base(ref_T_end, pose_from_posture(base_values),
+                                        pose_from_frame(active.ref));
+    validate_pose(result, "base-relative FK");
+    return result;
   }
 
   std::pair<bool, std::vector<std::array<double, 2>>> soft_limits() override {
@@ -2162,6 +2201,9 @@ Pose RokaeDriver::get_tcp_pose() { return impl_->session->tcp_pose(); }
 Pose RokaeDriver::get_base_frame() { return impl_->session->base_frame(); }
 Pose RokaeDriver::calculate_fk(const std::vector<double>& joints) {
   return impl_->session->calculate_fk(joints);
+}
+Pose RokaeDriver::calculate_fk_in_base(const std::vector<double>& joints) {
+  return impl_->session->calculate_fk_in_base(joints);
 }
 std::pair<bool, std::vector<std::array<double, 2>>> RokaeDriver::get_soft_limits() {
   return impl_->session->soft_limits();

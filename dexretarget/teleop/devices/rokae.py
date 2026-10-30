@@ -492,6 +492,7 @@ class RokaeXCoreDriver(RokaeDriverBase):
         for name in (
             "translation_cutoff_hz",
             "rotation_cutoff_hz",
+            "response_hz",
             "translation_deadband",
             "rotation_deadband",
             "max_translation_speed",
@@ -562,6 +563,17 @@ class RokaeXCoreDriver(RokaeDriverBase):
                 self._driver.calculate_fk(list(joint_position)), dtype=np.float64
             ),
             "xCoreSDK controller FK",
+        )
+
+    def calculate_fk_in_base(self, joint_position: Sequence[float]) -> np.ndarray:
+        """Official FK in the RT base frame; does not command any motion."""
+        if not self._connected or self._driver is None:
+            raise RuntimeError("ROKAE driver is not connected")
+        if not hasattr(self._driver, "calculate_fk_in_base"):
+            raise RuntimeError("rebuild the ROKAE bridge: bash rokae/build.sh")
+        return validate_transform(
+            np.asarray(self._driver.calculate_fk_in_base(list(joint_position)), dtype=np.float64),
+            "xCoreSDK base-relative FK",
         )
 
     def get_controller_base_frame(self) -> np.ndarray:
@@ -783,18 +795,24 @@ class RokaeXCoreDriver(RokaeDriverBase):
                 raise ValueError("pinocchio realtime requires a host kinematic model")
             from rokae.control.smoothing import JointStreamConfig
 
-            limits = JointStreamConfig.from_limits(kinematics.stream_limits)
             enabled, soft = self.get_soft_limits()
-            if enabled:
-                soft_limits = np.asarray(soft, dtype=np.float64)
-                if soft_limits.shape != (limits.dof, 2):
-                    raise RuntimeError("controller soft limits do not match the arm dof")
-                limits.position_min = np.maximum(limits.position_min, soft_limits[:, 0])
-                limits.position_max = np.minimum(limits.position_max, soft_limits[:, 1])
-                if np.any(limits.position_min >= limits.position_max):
-                    raise RuntimeError(
-                        "controller soft limits do not overlap the Pinocchio joint limits"
-                    )
+            if not enabled:
+                raise RuntimeError("controller soft limits must be enabled before Pinocchio control")
+            kinematics.intersect_position_limits(soft)
+            joints_before = self.get_joint_positions()
+            kinematics.require_within_limits(joints_before)
+            # All queries precede RT/power-on. FK samples are virtual joint
+            # configurations, not movement waypoints. Never fit away a frame error.
+            report = kinematics.validate_controller_fk(self.calculate_fk_in_base, joints_before)
+            joints_after = self.get_joint_positions()
+            if np.max(np.abs(np.asarray(joints_after) - joints_before)) > 0.002:
+                raise RuntimeError("robot moved during model validation; retry while stationary")
+            kinematics.require_controller_match(joints_after, self.get_tcp_pose())
+            self.kinematics_validation = report
+            print(f"Pinocchio preflight: {len(report['samples'])} official FK samples; "
+                  f"max mismatch={report['max_translation_m']*1000:.2f} mm / "
+                  f"{np.rad2deg(report['max_rotation_rad']):.3f} deg; effective limits shared by IK/stream.")
+            limits = JointStreamConfig.from_limits(kinematics.stream_limits)
             cfg = self._binding.JointRealtimeConfig()
             cfg.max_velocity = limits.max_velocity.tolist()
             cfg.max_acceleration = limits.max_acceleration.tolist()
@@ -802,6 +820,7 @@ class RokaeXCoreDriver(RokaeDriverBase):
             cfg.position_min = limits.position_min.tolist()
             cfg.position_max = limits.position_max.tolist()
             cfg.reference_cutoff_hz = limits.reference_cutoff_hz
+            cfg.response_hz = limits.response_hz
             cfg.deadband = limits.deadband
             cfg.max_target_delta = limits.max_target_delta
             cfg.hold_timeout = limits.hold_timeout

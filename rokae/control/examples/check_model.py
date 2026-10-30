@@ -53,13 +53,23 @@ def main() -> None:
         measured_pose = driver.get_tcp_pose()
         if measured_q is None:
             raise RuntimeError("robot did not return joints")
+        enabled, limits = driver.get_soft_limits()
+        if not enabled:
+            raise RuntimeError("controller soft limits are disabled; model validation cannot authorize streaming")
+        robot.intersect_position_limits(limits)
         translation, rotation = robot.pose_mismatch(measured_q, measured_pose)
         print(
             f"controller mismatch: {translation * 1000.0:.2f} mm / "
             f"{np.rad2deg(rotation):.2f} deg"
         )
         robot.require_controller_match(measured_q, measured_pose)
-        print("controller FK is inside the joint-stream start tolerance")
+        report = robot.validate_controller_fk(driver.calculate_fk_in_base, measured_q)
+        if np.max(np.abs(driver.get_joint_positions()-measured_q)) > 0.002:
+            raise RuntimeError("robot moved during FK queries; retry while stationary")
+        print(f"Official FK: {len(report['samples'])} virtual configurations, "
+              f"max error {report['max_translation_m']*1000:.3f} mm / "
+              f"{np.rad2deg(report['max_rotation_rad']):.4f} deg")
+        print("Model consistency gate passed; this is not physical accuracy calibration. No motion was commanded.")
     finally:
         driver.disconnect()
 

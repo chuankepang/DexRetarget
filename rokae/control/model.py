@@ -7,7 +7,7 @@ robot class: J1/J3/J5/J7 spin, J2/J4/J6 bend. Link lengths live in
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +39,7 @@ class StreamLimits:
     stop_timeout: float
     max_source_age: float
     future_tolerance: float
+    response_hz: float = 0.0
 
     @property
     def dof(self) -> int:
@@ -57,6 +58,7 @@ class IKGains:
     limit_margin: float
     max_translation_speed: float
     max_angular_speed: float
+    posture_reference: str = "model"
 
 
 class XmateErPro7:
@@ -83,6 +85,15 @@ class XmateErPro7:
         self.max_jerk = np.asarray(raw["max_jerk"], dtype=np.float64)
         stream = raw["stream"]
         ik = raw["ik"]
+        validation = raw.get("validation", {})
+        self.validation_translation_tolerance = float(validation.get("translation_tolerance_m", 0.020))
+        self.validation_rotation_tolerance = float(validation.get("rotation_tolerance_rad", 0.10))
+        self.validation_joint_offset = float(validation.get("joint_offset_rad", 0.15))
+        if any(not np.isfinite(v) or v <= 0 for v in (
+            self.validation_translation_tolerance, self.validation_rotation_tolerance,
+            self.validation_joint_offset,
+        )):
+            raise ValueError("model validation tolerances and joint offset must be finite and positive")
         arrays = (
             self.neutral,
             self.position_min,
@@ -93,6 +104,11 @@ class XmateErPro7:
         )
         if any(value.shape != (7,) for value in arrays):
             raise ValueError("xMate ER Pro 7 model arrays must have length 7")
+        if (any(not np.all(np.isfinite(value)) for value in arrays)
+                or np.any(lower >= upper)
+                or any(np.any(value <= 0) for value in
+                       (self.max_velocity, self.max_acceleration, self.max_jerk))):
+            raise ValueError("model joint arrays must be finite with ordered positions and positive motion limits")
         self.stream_limits = StreamLimits(
             max_velocity=self.max_velocity.copy(),
             max_acceleration=self.max_acceleration.copy(),
@@ -106,6 +122,7 @@ class XmateErPro7:
             stop_timeout=float(stream["stop_timeout"]),
             max_source_age=float(stream["max_source_age"]),
             future_tolerance=float(stream["future_tolerance"]),
+            response_hz=float(stream.get("response_hz", 0.0)),
         )
         self.ik_gains = IKGains(
             damping=float(ik["damping"]),
@@ -118,7 +135,19 @@ class XmateErPro7:
             limit_margin=float(ik["limit_margin"]),
             max_translation_speed=float(ik["max_translation_speed"]),
             max_angular_speed=float(ik["max_angular_speed"]),
+            posture_reference=str(ik.get("posture_reference", "model")),
         )
+        if self.ik_gains.posture_reference not in {"initial", "model"}:
+            raise ValueError("ik.posture_reference must be initial or model")
+        gains = self.ik_gains
+        if (any(not np.isfinite(v) or v <= 0 for v in (
+                gains.damping, gains.damping_max, gains.singular_sigma,
+                gains.null_max_speed, gains.limit_margin,
+                gains.max_translation_speed, gains.max_angular_speed))
+                or gains.damping_max < gains.damping
+                or any(not np.isfinite(v) or v < 0 for v in
+                       (gains.posture_gain, gains.limit_gain, gains.singularity_gain))):
+            raise ValueError("IK gains must be finite, ordered and have valid signs")
         self.model, self.tcp_frame = self._build()
         self.data = self.model.createData()
 
@@ -162,6 +191,54 @@ class XmateErPro7:
     def clip(self, joints: np.ndarray) -> np.ndarray:
         return np.clip(self._as_q(joints), self.position_min, self.position_max)
 
+    def require_within_limits(self, joints: np.ndarray) -> np.ndarray:
+        q = self._as_q(joints)
+        if np.any(q < self.position_min) or np.any(q > self.position_max):
+            raise ValueError("joint state is outside the effective IK/stream limits")
+        return q
+
+    def intersect_position_limits(self, controller_limits: np.ndarray) -> None:
+        """One effective boundary for IK, Pinocchio and the native joint stream.
+
+        Only called before RT starts. Never widens controller/model limits.
+        """
+        limits = np.asarray(controller_limits, dtype=float)
+        if limits.shape != (self.dof, 2) or not np.all(np.isfinite(limits)):
+            raise ValueError("controller joint limits must be a finite 7x2 array")
+        lower = np.maximum(self.position_min, limits[:, 0])
+        upper = np.minimum(self.position_max, limits[:, 1])
+        if np.any(limits[:, 0] >= limits[:, 1]) or np.any(lower >= upper):
+            raise ValueError("controller soft limits do not overlap the Pinocchio joint limits")
+        self.position_min, self.position_max = lower, upper
+        self.model.lowerPositionLimit[:] = lower
+        self.model.upperPositionLimit[:] = upper
+        self.stream_limits = replace(self.stream_limits, position_min=lower.copy(), position_max=upper.copy())
+
+    def validate_controller_fk(self, calculate_fk_in_base, anchor: np.ndarray) -> dict:
+        """Query official FK at virtual joint samples; never commands motion.
+
+        Provider must return base_T_TCP using the same TCP as tcpPose_m.
+        No fitted alignment hides an incorrect base, TCP or tool rotation.
+        """
+        q = self.require_within_limits(anchor)
+        samples = [("current", q.copy()), ("model_neutral", self.clip(self.neutral))]
+        for index in range(self.dof):
+            for sign in (-1, 1):
+                candidate = q.copy()
+                candidate[index] += sign * self.validation_joint_offset
+                samples.append((f"J{index+1}_{sign:+}", self.clip(candidate)))
+        rows = []
+        for name, candidate in samples:
+            try:
+                translation, rotation = self.require_controller_match(
+                    candidate, calculate_fk_in_base(candidate))
+            except RuntimeError as error:
+                raise RuntimeError(f"official FK sample {name}: {error}") from error
+            rows.append({"sample": name, "translation_m": translation, "rotation_rad": rotation})
+        return {"samples": rows,
+                "max_translation_m": max(row["translation_m"] for row in rows),
+                "max_rotation_rad": max(row["rotation_rad"] for row in rows)}
+
     def fk(self, joints: np.ndarray) -> np.ndarray:
         """base_T_tcp as a row-major 4x4 matrix."""
         q = self._as_q(joints)
@@ -200,6 +277,20 @@ class XmateErPro7:
             dtype=np.float64,
         )
 
+    def error_and_jacobian(self, joints: np.ndarray, base_T_tcp: np.ndarray):
+        """One kinematic traversal for the same local SE(3) error/Jacobian."""
+        q = self._as_q(joints)
+        target = np.asarray(base_T_tcp, dtype=np.float64)
+        if target.shape != (4, 4) or not np.all(np.isfinite(target)):
+            raise ValueError("target pose must be a finite 4x4 matrix")
+        pin.computeJointJacobians(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        desired = pin.SE3(target[:3, :3], target[:3, 3])
+        error = np.array(pin.log6(self.data.oMf[self.tcp_frame].actInv(desired)).vector)
+        jacobian = np.array(pin.getFrameJacobian(
+            self.model, self.data, self.tcp_frame, pin.ReferenceFrame.LOCAL), copy=True)
+        return error, jacobian
+
     def smallest_singular_value(self, joints: np.ndarray) -> float:
         singular = np.linalg.svd(self.jacobian(joints), compute_uv=False)
         return float(singular[-1])
@@ -218,9 +309,19 @@ class XmateErPro7:
         self,
         joints: np.ndarray,
         measured_base_T_tcp: np.ndarray,
-        translation_tolerance: float = 0.020,
-        rotation_tolerance: float = 0.10,
+        translation_tolerance: float | None = None,
+        rotation_tolerance: float | None = None,
     ) -> tuple[float, float]:
+        if translation_tolerance is None:
+            translation_tolerance = self.validation_translation_tolerance
+        if rotation_tolerance is None:
+            rotation_tolerance = self.validation_rotation_tolerance
+        measured = np.asarray(measured_base_T_tcp, dtype=float)
+        if (measured.shape != (4, 4) or not np.all(np.isfinite(measured))
+                or not np.allclose(measured[3], [0, 0, 0, 1], atol=1e-8)
+                or not np.allclose(measured[:3, :3].T @ measured[:3, :3], np.eye(3), atol=1e-6)
+                or not np.isclose(np.linalg.det(measured[:3, :3]), 1., atol=1e-6)):
+            raise ValueError("controller FK must be a finite rigid base_T_TCP transform")
         translation, rotation = self.pose_mismatch(joints, measured_base_T_tcp)
         if translation > translation_tolerance or rotation > rotation_tolerance:
             raise RuntimeError(

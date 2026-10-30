@@ -83,10 +83,17 @@ bash tools/install_collection.sh --export
 
 ## 逆解与参数生效范围
 
-三份 YAML 已逐项补充中文注释，完整 117 项归属与当前算法限制见[IK/配置审查](ik_config_audit.md)。
-Cup home 覆盖通用启动姿态，`manipulation_init` 是独立演示预设，`neutral_position` 是 IK 副任务参考；三者不能混用。
+三份 YAML 的参数归属与算法限制见[IK/配置审查](ik_config_audit.md)，跨框架映射范式见[调研表](../relatedworks.md)。
+Cup home 覆盖通用启动姿态，`manipulation_init` 是独立演示预设；IK 默认 `posture_reference: initial`，在使能/c/恢复时取当前关节参考。`model` 模式才吸向 `neutral_position`。
+真机启动前将控制器软限位与模型限位取交集，共同用于 IK 和原生关节流；并查询 16 个虚拟配置的官方 FK。`models/...yaml: validation` 维护容差，不会运动到这些采样点。
 当前 Pinocchio 路线主要使用模型中的 IK/关节流限幅，不能把 `safety` 的笛卡尔滤波和工作空间盒视为该路线已执行的约束。
 
 ## 手腕与工具旋转轴
 
 `teleoperation.rotation_mapping` 决定空间轴还是工具相对轴；`rotation_scale` 决定角度比例。当前为 tool_relative + 1.0，`wrist_to_tool_rotation` 明确右手系手腕局部轴到工具局部轴，不与位置映射矩阵混用。[具体公式、轴约定与验证](rokae_orientation_mapping.md)。参数在启动时加载，运行中改 YAML 不会热切换。
+
+## 参考响应与计时
+
+`models/xmate_er_pro_7.yaml: stream.response_hz` 只作用于 Pinocchio 关节流；`robots/rokae.yaml: safety.response_hz` 作用于官方笛卡尔位置/阻抗参考。当前均为 2 Hz，各自有唯一来源，不在任务配置重复。正值选择包含加速度反馈的三阶参考生成，0 保留旧递推；这不是实际阻抗阻尼、通信频率或电机带宽。现有速度/加速度/jerk 和超时限制仍生效。
+
+`--timing-report PATH` 可选收集主机分段耗时，每项最多保留最近 4096 样本，退出后写 JSON。`--config` 仍选择通信配置，`--arm-control` 选择后端。完整语义、测量边界与回退方法见[延迟审查](teleop_latency_review.md)。

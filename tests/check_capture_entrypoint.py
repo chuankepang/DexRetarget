@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--synthetic-cameras", action="store_true")
     parser.add_argument("--teleop-only", action="store_true")
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--output-root", type=Path, default=ROOT / "data/camera_tests/entrypoint_smoke")
     parser.add_argument("--arm-control", choices=["pinocchio", "cartesian", "impedance"], default="cartesian")
     args = parser.parse_args()
     master, slave = os.openpty()
@@ -93,7 +94,7 @@ def main():
             client.close()
 
     config = json.loads((ROOT / "config/collection/collection.json").read_text())
-    config["output_root"] = str(ROOT / "data/camera_tests/entrypoint_smoke")
+    config["output_root"] = str(args.output_root.resolve())
     config_path = Path(tempfile.mkdtemp(prefix="dex-entrypoint-")) / "collection.json"
     config_path.write_text(json.dumps(config))
     threads = [threading.Thread(target=hand_peer, daemon=True), threading.Thread(target=quest_peer, daemon=True)]
@@ -107,6 +108,7 @@ def main():
         "--inspire-port", port_name, "--quest3-port", str(udp_port), "--quest3-protocol", "udp",
         "--no-capture" if args.teleop_only else "--capture", "--collection-config", str(config_path), "--task", "synthetic entrypoint integration test",
         "--arm-print-hz", "0",
+        "--timing-report", str(config_path.parent/'timing.json'),
     ], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1)
     lines = []
@@ -148,7 +150,8 @@ def main():
             assert process.returncode == 0, "".join(lines)
             assert not any(line.startswith(("Saved:", "Recording:")) for line in lines)
             report = {"teleop_only": True, "serial_transactions": counts,
-                      "startup_pause_enable_pause_home_quit": True}
+                      "startup_pause_enable_pause_home_quit": True,
+                      "host_timing": json.loads((config_path.parent/'timing.json').read_text())}
             if args.report:
                 args.report.write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps(report, indent=2))
@@ -255,7 +258,8 @@ def main():
                 for start, stop in intervals:
                     assert not np.any((t > start + .05) & (t < stop - .05)), name
         report = {"episodes": reports, "serial_transactions": counts,
-                  "synthetic_cameras": args.synthetic_cameras}
+                  "synthetic_cameras": args.synthetic_cameras,
+                  "host_timing": json.loads((config_path.parent/'timing.json').read_text())}
         if args.report:
             args.report.write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))

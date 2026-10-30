@@ -152,8 +152,11 @@ class RealtimeCartesianConfig:
     stop_timeout: float = 0.60
     max_source_age: float = 0.20
     future_tolerance: float = 0.05
+    response_hz: float = 0.0
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.response_hz) or not 0 <= self.response_hz <= 5:
+            raise ValueError("response_hz must be finite and in [0, 5]")
         positive = (
             "control_hz",
             "translation_cutoff_hz",
@@ -292,15 +295,23 @@ class CartesianSetpointGenerator:
         # bounds for moving Quest targets.
         damping_ratio = 1.25
         natural_frequency = min(
-            2.0 * max_acceleration / max_velocity,
+            (2.0 * math.pi * self.config.response_hz if self.config.response_hz > 0
+             else 2.0 * max_acceleration / max_velocity),
             0.5 / dt,
         )
-        desired_acceleration = _limit_norm(
-            natural_frequency * natural_frequency * error
-            - 2.0 * damping_ratio * natural_frequency * velocity,
-            max_acceleration,
-        )
-        jerk = _limit_norm((desired_acceleration - acceleration) / dt, max_jerk)
+        if self.config.response_hz > 0:
+            natural_frequency = min(
+                natural_frequency,
+                (2*max_jerk / max(float(np.linalg.norm(error)), 1e-12))**(1/3),
+                math.sqrt(2*max_jerk / max(3*float(np.linalg.norm(velocity)), 1e-12)),
+                2*max_jerk / max(3*float(np.linalg.norm(acceleration)), 1e-12))
+            jerk = _limit_norm(natural_frequency**3*error - 3*natural_frequency**2*velocity
+                               - 3*natural_frequency*acceleration, max_jerk)
+        else:
+            desired_acceleration = _limit_norm(
+                natural_frequency * natural_frequency * error
+                - 2.0 * damping_ratio * natural_frequency * velocity, max_acceleration)
+            jerk = _limit_norm((desired_acceleration - acceleration) / dt, max_jerk)
         new_acceleration = _limit_norm(acceleration + jerk * dt, max_acceleration)
         new_velocity = _limit_norm(velocity + new_acceleration * dt, max_velocity)
         step = new_velocity * dt

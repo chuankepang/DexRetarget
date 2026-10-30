@@ -110,6 +110,33 @@ python rokae/impedance_test/run.py \
 
 **阻抗性能尚未完成真机验收。**正式使用前先核实负载/TCP并完成独立测试；遥操作或采集命令将 `--arm-control pinocchio` 改为 `--arm-control impedance` 即选择阻抗路线，VR 控制的是平衡位姿。参数说明见[阻抗配置](docs/rokae_impedance_configuration.md)。
 
+### 跟随响应与延迟检查
+
+`--config` 选择 UDP / USB 通信；`--arm-control` 选择机械臂后端。两者独立，原位置/姿态映射相同。需要分析跟随延迟时，加 `--timing-report`，退出后保存主机分段耗时：
+
+```bash
+python -m dexretarget --config config/quest/udp.yaml \
+  --task-config config/tasks/cup.yaml --arm-control pinocchio --no-capture \
+  --timing-report /tmp/teleop-pinocchio.json
+```
+
+阻抗用 `--arm-control impedance`；USB 换通信配置并保持终端 A。报告不包含头显内部识别和真实机械响应。当前参考响应为 2 Hz：关节路线配置在 `config/models/xmate_er_pro_7.yaml: stream.response_hz`，笛卡尔/阻抗路线在 `config/robots/rokae.yaml: safety.response_hz`；不是物理阻抗阻尼或视觉帧率，设为 0 可回退旧参考算法。更新代码后在 dexteleop 执行 `bash rokae/build.sh` 重建原生模块。
+
+[跟随与延迟审查](docs/teleop_latency_review.md)包含离线基准、实测范围、参数归属及补偿算法说明。
+
+### 本轮测试与回退
+
+本轮测试版本标记为 `teleop-test-20261030`；更新前版本为 `pre-teleop-optimization-20261030`（`0838558`）。两者都保留在 GitHub。测试前按上文重建原生模块。
+
+需要回退时，先退出遥操作和阻抗测试，用 `git status --short` 检查并保存自己的未提交修改，再执行：
+
+```bash
+git switch --detach pre-teleop-optimization-20261030
+bash rokae/build.sh
+```
+
+这只切换本机代码，不改写 GitHub 历史或删除数据；使用旧版本自带的启动命令。回到本轮版本用 `git switch --detach teleop-test-20261030` 并再次构建，继续开发用 `git switch main`。切换代码不会恢复控制器中已写入的负载或其他硬件状态。
+
 <a id="rokae-recovery"></a>
 
 ## 5. 机械臂状态、回位与恢复
@@ -160,6 +187,14 @@ python rokae/examples/06_recover_soft_limits.py \
 通信服务按 `Ctrl+C` 后会有序清理，连续按键不会打断清理。异常退出遗留的 socket 会在下次启动时检查并自动回收；运行中的服务仍会拒绝重复启动。通信服务停止后，正在运行的遥操作输入会失效；恢复服务后重新启动遥操作。
 
 ## 7. 配置入口
+
+Pinocchio 路线启动前会合并有效关节限位，并只读查询多姿态官方 FK；模型/TCP 不一致时阻止启动。控制柜开机且机器人静止时可单独检查（不上电、不发运动指令）：
+
+```bash
+python rokae/control/examples/check_model.py --execute
+```
+
+当前手腕映射保持不变；模型、零空间与检查结果见[IK 审查](docs/ik_config_audit.md)，跨框架比较见[调研表](relatedworks.md)。
 
 | 配置 | 用途 |
 | --- | --- |

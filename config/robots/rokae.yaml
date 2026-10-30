@@ -157,6 +157,9 @@ teleoperation:
 
 # 笛卡尔参考发生器参数。当前 Pinocchio 路线不使用其笛卡尔滤波/工作空间约束；关节限幅见模型。
 safety:
+  # Hz，Cartesian/impedance 共用参考三阶跟踪器带宽上限；0 使用旧二阶 a/v 公式。
+  # 与硬件阻抗刚度/阻尼无关；不改变实际速度、加速度、jerk 或力矩保护。
+  response_hz: 2.0
   # Hz；笛卡尔路线平移低通。
   translation_cutoff_hz: 5.0
   # Hz；笛卡尔路线姿态低通。
