@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pinocchio as pin
-import yaml
+from dexretarget.config import load_yaml_mapping
 
 MODEL_PATH = Path(__file__).resolve().parents[2] / "config/models/xmate_er_pro_7.yaml"
 
@@ -63,8 +63,7 @@ class XmateErPro7:
     """Host kinematics for xMate ER Pro 7. FK, Jacobian and frame error only."""
 
     def __init__(self, path: Path = MODEL_PATH) -> None:
-        with Path(path).open("r", encoding="utf-8") as stream:
-            raw = yaml.safe_load(stream)
+        raw = load_yaml_mapping(path)
         if not isinstance(raw, dict):
             raise ValueError(f"invalid robot model: {path}")
         self.path = Path(path)

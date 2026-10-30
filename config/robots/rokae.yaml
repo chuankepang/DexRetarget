@@ -108,7 +108,16 @@ control:
   impedance:
     # 原生 SDK 笛卡尔阻抗后端。
     backend: sdk_cartesian
-    # 平移 N/m、旋转 Nm/rad；占位试验值，不是厂家推荐配方。
+    # 刚度/期望力的方向：与独立 configured 测试一致；不是 VR 位姿的坐标系。
+    force_frame: tool
+    # 仅平衡位姿参考的速度/加速度，优先于 safety 通用值；CLI 最优先。
+    # 不提高控制器实际速度/力矩保护；接触仍通过 reference_limit 限制平衡点误差。
+    reference_motion:
+      max_translation_speed: 0.20       # m/s，原通用值 0.15
+      max_angular_speed: 0.60           # rad/s，原 0.50
+      max_translation_acceleration: 0.60  # m/s²，原 0.40
+      max_angular_acceleration: 2.0     # rad/s²，原 1.50
+    # 平移 N/m、旋转 Nm/rad；保留最近独立测试基线，非厂家推荐配方。
     stiffness: [300.0, 300.0, 300.0, 15.0, 15.0, 15.0]
     # 前三项 N、后三项 Nm；期望外力/力矩。
     desired_wrench: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -125,11 +134,22 @@ control:
 
 # Quest 相对映射，作用于全部臂控制后端。
 teleoperation:
+  # 秒；跟踪恢复后连续新鲜数据的等待。0=首次新鲜数据即恢复；不是丢失检测阈值。
+  # 重定参考仍保留；实际恢复时间还取决于 Quest 更新和应用调度周期。
+  tracking_resume_delay_s: 0.01
   # 相对位移缩放，1.0 倍；不是速度设置。
   translation_scale: 1.0
   # 相对旋转向量缩放，1.0 倍；不代表绝对姿态映射。
-  rotation_scale: 0.8
-  # 3x3 按行展开；Quest 相对运动轴到机器人/世界轴的正交旋转。
+  rotation_scale: 1.0  # 原 0.8：人手90°只输出72°；当前按1:1。
+  # tool_relative=初始手腕局部增量映射至初始工具；spatial=旧世界轴增量映射。
+  rotation_mapping: tool_relative
+  # 约定：项目右手系手腕局部 X 为操作纵轴，映射工具 Z；Y→Y，Z→-X。
+  # 这是显式操作轴约定，不是实测安装标定；需现场以小角度核对三轴/符号。
+  wrist_to_tool_rotation:
+    [0.0, 0.0, -1.0,
+     0.0, 1.0, 0.0,
+     1.0, 0.0, 0.0]
+  # 3x3 按行展开；位置增量到世界轴；仅 spatial 模式也用于姿态。
   quest_to_robot_rotation:
     [1.0, 0.0, 0.0,
      0.0, 1.0, 0.0,

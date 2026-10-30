@@ -5,7 +5,10 @@ import numpy as np
 
 class TrackingHold:
     """Hold on missing input; resume after a continuous fresh interval."""
-    def __init__(self, resume_delay=0.20):
+    def __init__(self, resume_delay=0.01):
+        resume_delay = float(resume_delay)
+        if not np.isfinite(resume_delay) or resume_delay < 0:
+            raise ValueError("tracking_resume_delay_s must be finite and non-negative")
         self.held = False
         self.fresh_since = None
         self.resume_delay = resume_delay

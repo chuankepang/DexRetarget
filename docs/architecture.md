@@ -1,10 +1,10 @@
 # 架构与依赖边界
 
-应用层组装三个独立模块；不使用事件总线、插件框架或额外队列。运行时沿用直接回调、相机进程管道和单写盘队列。
+应用层组装独立模块；不使用事件总线或插件框架。运行时沿用直接回调、相机进程管道和单写盘队列；Quest 可通过独立通信进程的本机状态快照接入。
 
 ```text
 DexRetarget/
-├── config/                   # robots/tasks/cameras/collection/retargeting/models/tools
+├── config/                   # quest/robots/tasks/cameras/collection/retargeting/models/tools
 ├── dexretarget/
 │   ├── app/                  # 唯一应用组装层
 │   ├── teleop/               # 控制与跟踪保持
@@ -34,6 +34,8 @@ DexRetarget/
 和旧脚本是兼容适配层；新应用不依赖它们。兼容层的组合依赖不代表核心层的依赖方向。
 数据 CLI 与模拟 CLI 同样放在应用层；`python -m dexretarget.dataset` 只转发命令。
 公共几何从 `anydexretarget.geometry` 读取，旧 `teleop.pose` 路径继续导出同一函数。
+
+配置解析集中在 `rokae/control/configuration.py`：只解析参数，不构造设备。`controllers/spec.py` 管理控制器选择、参数校验和 native 参数传递；`dexretarget/teleop/rokae.py` 仅组装并启动控制链路。阻抗路线传递平衡位姿，独立测试与正式路线共享配置中的刚度和力控坐标。详见[阻抗数据流与配置归属](rokae_impedance_configuration.md)。
 
 ## 实际控制流与数据流
 
@@ -84,3 +86,15 @@ CaptureObserver，读取频率/时间窗在 CaptureSources，记录与文件格�
 ## 跟踪保持
 
 Session.enabled 表示操作者意图，Session.tracking_held 表示当前输入不可用于控制。二者分开；臂目标发布与手发送检查两道门。HOLD 时臂调用驱动 hold、手停止新增目标，记录 control=false；恢复连续新鲜后，在会话锁内重建参考、重置 IK，再允许发送。手目标从最后发送值渐变，记录的是实际下发并确认的寄存器值。手动暂停不会被恢复覆盖。实时故障处理保持独立。
+
+## Quest 通信服务
+
+共享的 `dexretarget/quest_config.py` 解析 `config/quest/udp.yaml` 或 `usb_tcp.yaml`，任务只引用默认通信配置，显式 `--config` 优先。**UDP 默认由遥操作程序直接接收，不创建 IPC 客户端、不依赖通信服务或 ADB。**
+
+USB TCP 的 `python -m dexretarget.quest --config config/quest/usb_tcp.yaml` 是终端管理的输入进程，不注册自启。`QuestRelayServer` 通过 Unix `SOCK_SEQPACKET` 发布固定大小的状态；`QuestRelayInput` 与直接 `Quest3` 共用 `QuestTrackingState` 的 getters，保持坐标、数组类型、左右手和时间戳语义。以下生命周期和 IPC 描述适用于该 USB 服务路线。
+
+只有通信进程持有头显 socket。关闭一个本地订阅者只释放该客户端；关闭整个通信进程才停止上游接收；TCP 连接会关闭，UDP 无连接可关闭。应用退出不停止服务。读取客户端使用后台线程，控制循环仅取锁保护的缓存；原生 1 kHz 路径没有增加 IPC 调用。
+
+上游有效更新通过非阻塞通知唤醒发布端；双手快照在接收锁内生成，无本地订阅者时不编码。各客户端发送缓冲有界，发送满时跳过该次更新；读端合并已到达快照。慢订阅者不阻塞上游接收。闲置心跳仍使用原接收时间戳，不能把旧状态变成新数据。服务断开/协议错误使本地缓存清空并报告 error，现有 tracking HOLD 生效；不在正在控制时自动重新绑定上游端口。
+
+IPC 不改变 episode schema：CaptureObserver 仍接收同样的数据和原始主机时间戳。此处不包含源端时钟同步或遮挡识别质量改进。启动与停止方式见[运行说明](../README_QUEST3_INSPIRE_ROKAE.md#teleoperation)。

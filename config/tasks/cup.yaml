@@ -11,10 +11,9 @@ teleop:
   arm_config: config/robots/rokae.yaml
   # 左右手选择。
   hand: right
-  # Quest 接收协议。
-  quest3_protocol: udp
-  # Quest 接收端口。
-  quest3_port: 9000
+  # 只引用默认通信配置；--config 可切换为 config/quest/udp.yaml。
+  # 协议、地址和端口唯一维护在通信配置，不在任务中重复定义。
+  quest_config: config/quest/usb_tcp.yaml
   # 灵巧手串口设备。
   inspire_port: /dev/ttyUSB0
   # 串口波特率。

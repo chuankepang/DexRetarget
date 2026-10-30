@@ -39,6 +39,7 @@ class ControllerSpec:
     max_equilibrium_rotation: float
     mock_mass: float
     mock_damping: np.ndarray
+    force_frame: str = "world"
     apply_load_on_impedance_start: bool = False
     expected_load_mass: float = 0.0
     expected_load_cog: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -94,6 +95,16 @@ def resolve_controller(
         raise ValueError("control.mode must be pinocchio or cartesian")
 
     impedance = control.get("impedance") or {}
+    unsupported = {"damping", "damping_ratio", "nullspace_stiffness"} & set(impedance)
+    if unsupported:
+        raise ValueError(f"SDK 0.3.4 does not expose native Cartesian parameters: {sorted(unsupported)}; mock_damping is simulation only")
+    allowed = {"backend", "stiffness", "desired_wrench", "reference_limit", "mock_mass", "mock_damping", "force_frame", "reference_motion"}
+    if set(impedance) - allowed:
+        raise ValueError(f"Unknown control.impedance keys: {sorted(set(impedance) - allowed)}")
+    force_frame = impedance.get("force_frame", "world")
+    if force_frame not in {"world", "tool"}:
+        raise ValueError("control.impedance.force_frame must be world or tool")
+    _reference_motion(impedance)
     stiffness = _six(
         impedance.get("stiffness", _DEFAULT_STIFFNESS),
         "stiffness",
@@ -145,6 +156,7 @@ def resolve_controller(
         desired_wrench=wrench,
         max_equilibrium_translation=translation,
         max_equilibrium_rotation=rotation,
+        force_frame=force_frame,
         apply_load_on_impedance_start=apply_load,
         expected_load_mass=expected_mass,
         expected_load_cog=expected_cog,
@@ -158,7 +170,40 @@ def apply_realtime_gains(driver: object, spec: ControllerSpec) -> None:
     driver.apply_load_on_impedance_start = spec.apply_load_on_impedance_start
     driver.expected_load_mass = spec.expected_load_mass
     driver.expected_load_cog = spec.expected_load_cog
+    driver.impedance_force_frame = spec.force_frame
     driver.cartesian_stiffness = tuple(float(value) for value in spec.stiffness)
     driver.cartesian_desired_wrench = tuple(float(value) for value in spec.desired_wrench)
     driver.max_equilibrium_translation_error = float(spec.max_equilibrium_translation)
     driver.max_equilibrium_rotation_error = float(spec.max_equilibrium_rotation)
+
+
+_REFERENCE_MOTION_FIELDS = {
+    "max_translation_speed", "max_angular_speed",
+    "max_translation_acceleration", "max_angular_acceleration",
+    "max_translation_jerk", "max_angular_jerk",
+}
+
+
+def _reference_motion(impedance):
+    values = impedance.get("reference_motion", {})
+    if not isinstance(values, dict) or set(values) - _REFERENCE_MOTION_FIELDS:
+        raise ValueError("Invalid control.impedance.reference_motion keys")
+    result = {}
+    for name, value in values.items():
+        value = float(value)
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"reference_motion.{name} must be finite and positive")
+        result[name] = value
+    return result
+
+
+def effective_cartesian_safety(config, spec):
+    """Resolve reference-generator limits once; CLI overrides are applied by caller.
+
+    These limit equilibrium motion, never the measured robot velocity or torque.
+    Position control retains safety defaults; impedance may override named fields.
+    """
+    result = dict(config.get("safety") or {})
+    if spec.kind == "impedance":
+        result.update(_reference_motion((config.get("control") or {}).get("impedance") or {}))
+    return result

@@ -42,6 +42,13 @@ def test_control_imports_no_recording_or_camera():
                     ['dexretarget.dataset', 'dexretarget.camera', 'dexretarget.app', 'pyrealsense2', 'h5py', 'pinocchio'])
 
 
+def test_quest_communication_imports_no_robot_camera_or_recorder():
+    isolated_import('from dexretarget.teleop.devices.quest_relay import QuestRelayServer, QuestRelayInput\n',
+                    ['dexretarget.app', 'dexretarget.dataset', 'dexretarget.camera', 'rokae',
+                     'dexretarget.teleop.devices.rokae', 'dexretarget.teleop.devices.inspire',
+                     'pyrealsense2', 'h5py', 'pinocchio'])
+
+
 def test_cli_help_requires_no_device_or_storage_packages():
     isolated_import("from dexretarget.app.cli import build_parser\nbuild_parser().parse_args(['--help'])\n",
                     ['numpy', 'h5py', 'pyrealsense2', 'pinocchio', 'dexretarget.teleop', 'dexretarget.dataset'])
@@ -65,7 +72,7 @@ def test_cli_and_realtime_settings_match_pre_refactor_fixtures():
     parser = build_parser()
     actual = [{key: str(getattr(a,key)) if isinstance(getattr(a,key),Path) else getattr(a,key)
                for key in ['option_strings','dest','nargs','default','choices','required']}
-              for a in parser._actions]
+              for a in parser._actions if a.dest not in {'print_arm_config', 'config', 'quest3_usb', 'quest3_source', 'quest3_relay_socket'}]
     assert json.loads(json.dumps(actual)) == json.loads((ROOT/'tests/fixtures/legacy_cli.json').read_text())
     fixture = json.loads((ROOT/'tests/fixtures/legacy_realtime.json').read_text())
     for case in fixture['cases']:

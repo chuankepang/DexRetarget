@@ -116,6 +116,7 @@ PYBIND11_MODULE(_rokae_cpp, module) {
       .def_readwrite("controller_rate_limit", &RealtimeConfig::controller_rate_limit)
       .def_readwrite("controller_filter_cutoff_hz", &RealtimeConfig::controller_filter_cutoff_hz)
       .def_readwrite("rt_network_tolerance", &RealtimeConfig::rt_network_tolerance)
+      .def_readwrite("impedance_force_frame", &RealtimeConfig::impedance_force_frame)
       .def_readwrite("cartesian_stiffness", &RealtimeConfig::cartesian_stiffness)
       .def_readwrite("cartesian_desired_wrench", &RealtimeConfig::cartesian_desired_wrench)
       .def_readwrite("max_equilibrium_translation_error",

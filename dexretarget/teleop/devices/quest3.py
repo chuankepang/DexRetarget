@@ -177,36 +177,15 @@ def _parse_line(line: str) -> Optional[Tuple[str, str, Tuple[float, ...]]]:
     return (side, kind, tuple(floats))
 
 
-class Quest3:
-    """Quest 3 hand tracking input device via HTS UDP/TCP stream.
+class QuestTrackingState:
+    """Shared, lock-consistent tracking state; no transport or robot lifecycle."""
 
-    Receives hand landmark data from the Hand Tracking Streamer app running
-    on Meta Quest 3. The 21 HTS joints map directly to MediaPipe 21 keypoints.
-
-    Args:
-        host: Host/IP to bind the listener to.
-        port: Port to listen on.
-        protocol: Transport protocol, "udp" or "tcp".
-    """
-
-    def __init__(
-        self,
-        host: str = "0.0.0.0",
-        port: int = 9000,
-        protocol: str = "udp",
-    ) -> None:
-        self._host = host
-        self._port = port
-        self._protocol = protocol.lower()
-        if self._protocol not in ("udp", "tcp"):
-            raise ValueError(f"protocol must be 'udp' or 'tcp', got '{protocol}'")
-
+    def __init__(self) -> None:
         self._hands: Dict[str, _HandState] = {
             "right": _HandState("right"),
             "left": _HandState("left"),
         }
         self._lock = threading.Lock()
-        self._stop = threading.Event()
         self._error: Optional[Exception] = None
         self._stats: dict[str, object] = {
             "packets": 0,
@@ -224,15 +203,6 @@ class Quest3:
             "last_peer": None,
             "last_rejected_line": None,
         }
-        self._smoother = MediaPipeSmoother(buffer_size=5)
-
-        # Start receiver thread
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._conn_threads: list[threading.Thread] = []
-        self._thread.start()
-        logger.info(
-            "Quest3 receiver started (%s %s:%d)", self._protocol, self._host, self._port
-        )
 
     # -- public API (duck-typed with VisionPro / MediaPipeReplay) --
 
@@ -325,15 +295,6 @@ class Quest3:
             ),
         }
 
-    def stop(self) -> None:
-        """Stop the receiver thread."""
-        self._stop.set()
-        if self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        for t in list(self._conn_threads):
-            if t.is_alive():
-                t.join(timeout=0.5)
-
     @property
     def error(self) -> Optional[Exception]:
         """Return a fatal receiver-thread error, if one occurred."""
@@ -344,6 +305,63 @@ class Quest3:
         """Thread-safe receiver diagnostics for network/format bring-up."""
         with self._lock:
             return dict(self._stats)
+
+
+class Quest3(QuestTrackingState):
+    """Quest 3 hand tracking input device via HTS UDP/TCP stream.
+
+    Receives hand landmark data from the Hand Tracking Streamer app running
+    on Meta Quest 3. The 21 HTS joints map directly to MediaPipe 21 keypoints.
+
+    Args:
+        host: Host/IP to bind the listener to.
+        port: Port to listen on.
+        protocol: Transport protocol, "udp" or "tcp".
+    """
+
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 9000,
+        protocol: str = "udp",
+        *,
+        on_update=None,
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._protocol = protocol.lower()
+        if self._protocol not in ("udp", "tcp"):
+            raise ValueError(f"protocol must be 'udp' or 'tcp', got '{protocol}'")
+
+        super().__init__()
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._on_update = on_update
+        self._smoother = MediaPipeSmoother(buffer_size=5)
+
+        # Start receiver thread
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._conn_threads: list[threading.Thread] = []
+        self._thread.start()
+        logger.info(
+            "Quest3 receiver started (%s %s:%d)", self._protocol, self._host, self._port
+        )
+
+    def stop(self) -> None:
+        """Stop the receiver thread."""
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        for t in list(self._conn_threads):
+            if t.is_alive():
+                t.join(timeout=0.5)
+
+    def wait_until_ready(self, timeout: float = 5.0) -> None:
+        """Confirm bind/listen before launching a USB client or any outputs."""
+        if not self._ready.wait(timeout):
+            raise TimeoutError('Quest receiver did not bind in time')
+        if self._error is not None:
+            raise RuntimeError(f'Quest cannot listen on {self._protocol}:{self._port}') from self._error
 
     # -- internal receiver --
 
@@ -376,6 +394,9 @@ class Quest3:
                 ) + 1
                 self._stats["last_rejected_line"] = line[:160]
 
+        if valid and self._on_update is not None:
+            self._on_update()
+
     def _record_packet(self, byte_count: int, peer: object) -> None:
         with self._lock:
             self._stats["packets"] = int(self._stats["packets"]) + 1
@@ -395,14 +416,18 @@ class Quest3:
         except Exception as exc:  # Surface background socket failures to callers.
             self._error = exc
             logger.exception("Quest3 receiver stopped")
+        finally:
+            self._ready.set()  # Wake startup on errors as well as success.
 
     def _run_udp(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((self._host, self._port))
-        sock.settimeout(0.5)
-        logger.info("UDP listening on %s:%d", self._host, self._port)
         try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((self._host, self._port))
+            self._port = sock.getsockname()[1]
+            sock.settimeout(0.5)
+            logger.info("UDP listening on %s:%d", self._host, self._port)
+            self._ready.set()
             while not self._stop.is_set():
                 try:
                     data, addr = sock.recvfrom(65536)
@@ -424,12 +449,14 @@ class Quest3:
 
     def _run_tcp(self) -> None:
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_sock.bind((self._host, self._port))
-        server_sock.listen(1)
-        server_sock.settimeout(0.5)
-        logger.info("TCP server listening on %s:%d", self._host, self._port)
         try:
+            server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_sock.bind((self._host, self._port))
+            self._port = server_sock.getsockname()[1]
+            server_sock.listen(1)
+            server_sock.settimeout(0.5)
+            logger.info("TCP server listening on %s:%d", self._host, self._port)
+            self._ready.set()
             while not self._stop.is_set():
                 try:
                     conn, addr = server_sock.accept()
@@ -438,6 +465,7 @@ class Quest3:
                 thread = threading.Thread(
                     target=self._handle_tcp_conn, args=(conn, addr), daemon=True
                 )
+                self._conn_threads = [t for t in self._conn_threads if t.is_alive()]
                 self._conn_threads.append(thread)
                 thread.start()
         finally:
@@ -453,6 +481,10 @@ class Quest3:
                     data = conn.recv(4096)
                 except socket.timeout:
                     continue
+                except OSError:
+                    # A closed/reset client is recoverable; the listening
+                    # socket continues accepting the next HTS connection.
+                    break
                 if not data:
                     break
                 self._record_packet(len(data), addr)

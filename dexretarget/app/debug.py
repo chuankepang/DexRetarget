@@ -31,6 +31,9 @@ def _record_command(
                 "base_target_raw": command.base_target_raw.reshape(-1).tolist(),
                 "base_target_safe": command.base_target_safe.reshape(-1).tolist(),
                 "base_tcp_measured": measured.reshape(-1).tolist(),
+                "base_tcp_commanded": arm_driver.get_command_pose().reshape(-1).tolist(),
+                "measured_joint_position": diagnostics.get("measured_joint_position"),
+                "rejected_target_delta": diagnostics.get("rejected_target_delta"),
                 "driver_watchdog": diagnostics.get("watchdog_state"),
                 "driver_command_age": diagnostics.get("latest_command_age"),
             },
@@ -70,6 +73,11 @@ def print_arm_status(command, driver, status):
             command.mapped_relative[:3, :3]
         )
     )
+    world_reference = command.mapped_relative[:3, :3].T @ command.world_target[:3, :3]
+    mapped_tool_dr_deg = np.rad2deg(matrix_to_rotation_vector(
+        world_reference.T @ command.world_target[:3, :3]))
+    raw_to_command_deg = float(np.rad2deg(np.linalg.norm(matrix_to_rotation_vector(
+        target[:3, :3].T @ raw_target[:3, :3]))))
     tracking_dp = float(
         np.linalg.norm(target[:3, 3] - measured[:3, 3])
     )
@@ -105,6 +113,9 @@ def print_arm_status(command, driver, status):
         f"vr_delta={vr_dp * 1000.0:.2f}mm/{vr_dr_deg:.2f}deg "
         f"vr_body_dr_deg={np.array2string(vr_body_dr_deg, precision=2)} "
         f"mapped_world_dr_deg={np.array2string(mapped_world_dr_deg, precision=2)} "
+        f"mapped_tool_dr_deg={np.array2string(mapped_tool_dr_deg, precision=2)} "
+        f"raw_to_command_deg={raw_to_command_deg:.2f} "
+        f"rejected_target_delta={diagnostics.get('rejected_target_delta', 0)} "
         f"tracking_error={tracking_dp * 1000.0:.2f}mm/"
         f"{tracking_dr_deg:.2f}deg "
         f"tracking_world_dr_deg={np.array2string(tracking_world_dr_deg, precision=2)} "

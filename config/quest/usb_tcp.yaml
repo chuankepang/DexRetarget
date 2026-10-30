@@ -1,0 +1,6 @@
+# USB 有线 TCP：连接已授权的 Quest，程序自动建立 ADB reverse。
+# HTS 选 TCP Wired/ADB，目标 127.0.0.1:8000。
+schema_version: dexretarget.quest.v1
+mode: usb_tcp
+bind_host: 127.0.0.1
+port: 8000

@@ -35,7 +35,10 @@ class RelativePoseMapper:
     ``quest_to_robot_rotation`` maps axes from the Quest reference frame into
     the robot-reference incremental frame. ``T_world_base`` is the robot base
     pose in the shared world frame and supports upright, inverted, or tilted
-    mounting without scattered axis sign changes.
+    mounting without scattered axis sign changes. ``spatial`` preserves the
+    original world-axis rotation rule. ``tool_relative`` maps the initial-wrist
+    body increment through ``wrist_to_tool_rotation`` into the initial TCP.
+    This alignment must be checked against the physical hand/tool mounting.
     """
 
     def __init__(
@@ -44,6 +47,9 @@ class RelativePoseMapper:
         T_world_base: np.ndarray,
         translation_scale: float = 1.0,
         rotation_scale: float = 1.0,
+        *,
+        rotation_mapping: str = "spatial",
+        wrist_to_tool_rotation: np.ndarray | None = None,
     ) -> None:
         if not np.isfinite(translation_scale) or translation_scale <= 0.0:
             raise ValueError("translation_scale must be positive")
@@ -56,6 +62,13 @@ class RelativePoseMapper:
         self.T_base_world = invert_transform(self.T_world_base)
         self.translation_scale = float(translation_scale)
         self.rotation_scale = float(rotation_scale)
+        if rotation_mapping not in {"spatial", "tool_relative"}:
+            raise ValueError("rotation_mapping must be spatial or tool_relative")
+        self.rotation_mapping = rotation_mapping
+        self.wrist_to_tool_rotation = validate_rotation(
+            np.eye(3) if wrist_to_tool_rotation is None else wrist_to_tool_rotation,
+            "wrist_to_tool_rotation",
+        )
         self._T_vr_ref: Optional[np.ndarray] = None
         self._T_world_tcp_ref: Optional[np.ndarray] = None
         self._last_result: Optional[PoseMappingResult] = None
@@ -111,12 +124,21 @@ class RelativePoseMapper:
             * self.quest_to_robot_rotation
             @ (current[:3, 3] - self._T_vr_ref[:3, 3])
         )
-        spatial_rotation = current[:3, :3] @ self._T_vr_ref[:3, :3].T
-        mapped_rotation = (
-            self.quest_to_robot_rotation
-            @ spatial_rotation
-            @ self.quest_to_robot_rotation.T
-        )
+        if self.rotation_mapping == "tool_relative":
+            # Body delta in the reference wrist, mapped into the reference TCP.
+            # Translation stays spatial; changing wrist pose must not rotate its axes.
+            body_rotation = self._T_vr_ref[:3, :3].T @ current[:3, :3]
+            tool_delta = self.wrist_to_tool_rotation @ body_rotation @ self.wrist_to_tool_rotation.T
+            reference = self._T_world_tcp_ref[:3, :3]
+            # Keep mapped_relative a WORLD-frame increment for existing observers.
+            mapped_rotation = reference @ tool_delta @ reference.T
+        else:
+            spatial_rotation = current[:3, :3] @ self._T_vr_ref[:3, :3].T
+            mapped_rotation = (
+                self.quest_to_robot_rotation
+                @ spatial_rotation
+                @ self.quest_to_robot_rotation.T
+            )
         mapped_rotvec = matrix_to_rotation_vector(mapped_rotation)
         mapped_relative[:3, :3] = rotation_vector_to_matrix(
             self.rotation_scale * mapped_rotvec

@@ -28,6 +28,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hand-config", default=None)
     parser.add_argument("--quest3-port", type=int, default=9000)
     parser.add_argument("--quest3-protocol", choices=["udp", "tcp"], default="udp")
+    parser.add_argument('--config', type=Path, default=None,
+                        help='Quest communication YAML: config/quest/udp.yaml or usb_tcp.yaml')
+    parser.add_argument('--quest3-source', choices=['auto', 'direct', 'relay'], default='auto',
+                        help='auto prefers a running local Quest service for USB; relay requires it')
+    parser.add_argument('--quest3-relay-socket', type=Path, default=None,
+                        help='Override the Quest communication service Unix socket path')
+    parser.add_argument(
+        "--quest3-usb", action=argparse.BooleanOptionalAction, default=False,
+        help="Set up ADB reverse, open HTS and wait for tracking before robot initialization",
+    )
     parser.add_argument("--inspire-port", default="/dev/ttyUSB0")
     parser.add_argument("--inspire-baudrate", type=int, default=115200)
     parser.add_argument("--inspire-hand-id", type=int, default=1)
@@ -43,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
             "cartesianImpedance. Omit this to use the YAML controller."
         ),
     )
+    parser.add_argument("--print-arm-config", action="store_true", help="Print resolved arm configuration without hardware connection or motion")
     parser.add_argument("--mock-rokae", action="store_true")
     parser.add_argument("--arm-start-enabled", action="store_true")
     parser.add_argument("--rokae-robot-ip", default=None)
@@ -147,6 +158,14 @@ def main() -> None:
         0 <= args.rokae_rt_network_tolerance <= 100
     ):
         parser.error("--rokae-rt-network-tolerance must be in [0, 100]")
+    if args.print_arm_config:
+        import json
+        from rokae.control.configuration import describe_arm_config
+        try:
+            print(json.dumps(describe_arm_config(args), ensure_ascii=False, indent=2, allow_nan=False))
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            parser.error(str(exc))
+        return
     from .runtime import run_teleop
     run_teleop(args)
 

@@ -3,9 +3,9 @@ from dexretarget.teleop.tracking import TrackingHold, HandResumeBlend
 
 
 class TrackingRecovery:
-    def __init__(self, session):
+    def __init__(self, session, *, resume_delay=0.01):
         self.session = session
-        self.policy = TrackingHold()
+        self.policy = TrackingHold(resume_delay)
         self.hand = HandResumeBlend()
 
     def update(self, fresh, now, *, hold, resume):
@@ -13,7 +13,7 @@ class TrackingRecovery:
         # any new arm target or hand target can pass the gate.
         with self.session.lock:
             if not self.session.enabled:
-                self.policy = TrackingHold()
+                self.policy = TrackingHold(self.policy.resume_delay)
                 self.session.tracking_held = False
                 return
             transition = self.policy.update(fresh, now)
@@ -22,7 +22,7 @@ class TrackingRecovery:
                 hold()
                 if self.session.collector:
                     self.session.collector.control(False, 'tracking_hold')
-                print('Tracking HOLD: arm and hand targets frozen; enable intent retained.', flush=True)
+                print(f'Tracking HOLD: arm and hand targets frozen; enable intent retained. Recovery fresh window={self.policy.resume_delay * 1000:g} ms.', flush=True)
             elif transition == 'resume':
                 resume()
                 self.hand.resume(now)

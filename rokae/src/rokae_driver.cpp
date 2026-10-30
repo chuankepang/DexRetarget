@@ -233,6 +233,9 @@ void RealtimeConfig::validate() const {
   for (double value : expected_load_cog) {
     if (!std::isfinite(value)) throw std::invalid_argument("expected_load_cog must be finite");
   }
+  if (impedance_force_frame != "world" && impedance_force_frame != "tool") {
+    throw std::invalid_argument("impedance_force_frame must be world or tool");
+  }
   constexpr double kMaxStiffnessTranslation = 1500.0;
   constexpr double kMaxStiffnessRotation = 100.0;
   constexpr double kMaxWrenchForce = 60.0;
@@ -1412,8 +1415,11 @@ class Session final : public SessionBase {
           // 这是力控任务坐标，不用于旋转或交换法兰坐标系中的负载重心。
           const std::array<double, 16> world_frame{
               1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-          controller_->setFcCoor(world_frame, rokae::FrameType::world, ec);
-          check_ec(ec, "setFcCoor(world)");
+          controller_->setFcCoor(world_frame, config_.impedance_force_frame == "tool"
+              ? rokae::FrameType::tool : rokae::FrameType::world, ec);
+          check_ec(ec, "setFcCoor(impedance)");
+          std::cout << "[ROKAE] impedance force frame=" << config_.impedance_force_frame
+                    << "; target is equilibrium; damping is controller-internal" << std::endl;
           // Toolset readback proves the SDK tool configuration, not a separate
           // realtime dynamics readback. Explicitly pass the same validated load
           // through the RT API before startMove; never change protection limits.

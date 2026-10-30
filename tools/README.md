@@ -7,6 +7,7 @@
 | `check_project.py` | 标准库 AST 检查自有 Python 语法、核心依赖/循环及本地文档链接 |
 | `diagnostics/check_cameras.py` | 相机枚举、绑定和双路带宽检查；不驱动机器人 |
 | `diagnostics/check_quest_wrist_stability.py` | 原始 wrist 抖动/漂移；不驱动机器人 |
+| `diagnostics/benchmark_quest_relay.py` | 模拟双手 TCP 与本机转发的延迟/吞吐，不连接机器人、不保存原始日志 |
 | `diagnostics/check_rokae_connection.py` | SDK 只读连接 |
 | `robot/rokae_joint_tool.py` | 关节读取/明确确认后的小范围运动 |
 | `simulation/rokae_teleop.py` | 无硬件的坐标映射与限幅演示 |

@@ -1,5 +1,8 @@
 # ROKAE 固定参考阻抗独立试验
 
+当前 configured 测试与正式遥操作共享 `control.impedance.force_frame` 和刚度。robotassist / spring-check 是显式对照覆盖，不是正式默认配置。非零 desired_wrench 会阻止无触碰保持测试，避免静默忽略。参数职责及预览见[阻抗配置说明](../../docs/rokae_impedance_configuration.md)。
+
+
 最新轻推行程调整：`hold_8dr6_xzi` 在 19.395 s 因 J3 偏移 0.500062 rad 触发主机 joint_excursion，停止并确认下电；当时 TCP 偏移 8.16 mm，记录最大 38.48 mm、最大关节速度 0.3833 rad/s，未触发速度检查。轻推阶段（2 s 后）总关节偏移上限现为 **1.0 rad**；baseline 仍 0.50 rad，启动仍 0.04 rad，轻推速度 0.70 rad/s、TCP 100 mm。J1/J3 大幅变化提示冗余姿态运动，放宽行程不是零空间控制修复；若松手后继续自行运动，应停止并核查。新增停止详情会打印具体关节、偏移及阈值。未修改控制器保护、SDK 限速/滤波或负载。
 
 

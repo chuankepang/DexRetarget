@@ -160,8 +160,7 @@ secondary_velocity = posture + joint_limit_repulsion + bend_joint_repulsion
 | `instruction` | 默认自然语言任务描述；CLI --task 可覆盖。 |
 | `teleop.arm_config` | 机器人默认配置唯一入口；路径相对仓库根目录。 |
 | `teleop.hand` | 左右手选择。 |
-| `teleop.quest3_protocol` | Quest 接收协议。 |
-| `teleop.quest3_port` | Quest 接收端口。 |
+| `teleop.quest_config` | Quest 通信默认配置引用；`--config` 可覆盖，协议/监听地址/端口仅在 config/quest 中维护。 |
 | `teleop.inspire_port` | 灵巧手串口设备。 |
 | `teleop.inspire_baudrate` | 串口波特率。 |
 | `teleop.inspire_hand_id` | 灵巧手协议地址，不是左右手标识。 |

@@ -439,6 +439,7 @@ class RokaeXCoreDriver(RokaeDriverBase):
         self.apply_load_on_impedance_start = False
         self.expected_load_mass = 0.0
         self.expected_load_cog = (0.0, 0.0, 0.0)
+        self.impedance_force_frame = "world"
         self.cartesian_stiffness = (300.0, 300.0, 300.0, 15.0, 15.0, 15.0)
         self.cartesian_desired_wrench = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.max_equilibrium_translation_error = 0.04
@@ -515,6 +516,7 @@ class RokaeXCoreDriver(RokaeDriverBase):
         cfg.apply_load_on_impedance_start = self.apply_load_on_impedance_start
         cfg.expected_load_mass = self.expected_load_mass
         cfg.expected_load_cog = self.expected_load_cog
+        cfg.impedance_force_frame = self.impedance_force_frame
         cfg.cartesian_stiffness = tuple(self.cartesian_stiffness)
         cfg.cartesian_desired_wrench = tuple(self.cartesian_desired_wrench)
         cfg.max_equilibrium_translation_error = float(self.max_equilibrium_translation_error)

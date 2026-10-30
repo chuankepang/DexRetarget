@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any, Optional
 from dataclasses import dataclass
 import numpy as np
-import yaml
-from dexretarget.config import PROJECT_ROOT
+from dexretarget.config import PROJECT_ROOT, load_yaml_mapping
 from anydexretarget.teleop import (
-    ArmTeleopController, PoseSafetyConfig, PoseSafetyLimiter, RealtimeCartesianConfig,
+    ArmTeleopController, PoseSafetyConfig, PoseSafetyLimiter,
     RelativePoseMapper, make_transform, matrix_to_rotation_vector, quaternion_xyzw_to_matrix,
 )
 from .devices.rokae import MockRokaeDriver, RokaeXCoreDriver
+from rokae.control.configuration import configured_realtime
 
 def _pose_xyz_quat_to_matrix(pose: list[float], name: str) -> np.ndarray:
     values = np.asarray(pose, dtype=np.float64)
@@ -29,11 +29,7 @@ def _wrist_dict_to_matrix(wrist: dict) -> np.ndarray:
 def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"ROKAE teleoperation config not found: {path}")
-    with path.open("r", encoding="utf-8") as stream:
-        data = yaml.safe_load(stream)
-    if not isinstance(data, dict):
-        raise ValueError(f"ROKAE teleoperation config must be a mapping: {path}")
-    return data
+    return load_yaml_mapping(path)
 
 
 def _config_value(argument, section: dict[str, Any], key: str):
@@ -89,23 +85,6 @@ def _warn_if_non_realtime_kernel() -> None:
     )
 
 
-def configured_realtime(args, robot_config, safety_config):
-    """Apply the existing CLI > YAML precedence in one explicit field mapping."""
-    names = (
-        "translation_cutoff_hz", "rotation_cutoff_hz", "translation_deadband", "rotation_deadband",
-        "max_translation_speed", "max_angular_speed", "max_translation_acceleration", "max_angular_acceleration",
-        "max_translation_jerk", "max_angular_jerk", "max_target_translation_delta", "max_target_rotation_delta",
-    )
-    values = {name: float(_config_value(getattr(args, 'arm_' + name), safety_config, name)) for name in names}
-    for name in ['workspace_min', 'workspace_max']:
-        values[name] = tuple(_config_value(getattr(args, 'arm_' + name), safety_config, name))
-    values.update(
-        control_hz=float(robot_config['control_hz']),
-        hold_timeout=float(_config_value(args.arm_tracking_timeout, safety_config, 'hold_timeout')),
-        stop_timeout=float(_config_value(args.arm_stop_timeout, safety_config, 'stop_timeout')),
-        max_source_age=float(safety_config['max_source_age']), future_tolerance=float(safety_config['future_tolerance']),
-    )
-    return RealtimeCartesianConfig(**values)
 
 
 @dataclass(frozen=True)
@@ -138,6 +117,9 @@ def create_arm(args, home_config, input_device, hand_output=None):
     config = _load_yaml(arm_config_path)
     robot_config = config["robot"]
     teleop_config = config["teleoperation"]
+    # 在连接/上电前验证恢复等待参数；此状态机不执行等待或设备操作。
+    from .tracking import TrackingHold
+    TrackingHold(teleop_config.get("tracking_resume_delay_s", 0.01))
     safety_config = config["safety"]
     init_config = dict(robot_config["initial_joint_move"])
     if home_config:
@@ -180,7 +162,12 @@ def create_arm(args, home_config, input_device, hand_output=None):
     quest_to_robot_rotation = np.asarray(axis_values, dtype=np.float64).reshape(
         3, 3
     )
+    mapping_options = {
+        "rotation_mapping": teleop_config.get("rotation_mapping", "spatial"),
+        "wrist_to_tool_rotation": np.asarray(teleop_config.get("wrist_to_tool_rotation", np.eye(3)), dtype=float).reshape(3, 3),
+    }
     mapper = RelativePoseMapper(
+        **mapping_options,
         quest_to_robot_rotation=quest_to_robot_rotation,
         T_world_base=T_world_base,
         translation_scale=float(
@@ -192,6 +179,8 @@ def create_arm(args, home_config, input_device, hand_output=None):
             _config_value(args.arm_rotation_scale, teleop_config, "rotation_scale")
         ),
     )
+    print(f"ROKAE rotation mapping={mapper.rotation_mapping}, scale={mapper.rotation_scale:g}; "
+          f"wrist_to_tool={mapper.wrist_to_tool_rotation.tolist()}")
     print(
         "Configured T_world_base (world <- robot base):\n"
         + np.array2string(T_world_base, precision=7, suppress_small=False, sign="+")
@@ -225,6 +214,9 @@ def create_arm(args, home_config, input_device, hand_output=None):
             ),
         )
     )
+    from rokae.control.controllers.spec import effective_cartesian_safety
+
+    safety_config = effective_cartesian_safety(config, controller_spec)
     realtime_config = configured_realtime(args, robot_config, safety_config)
 
     if args.mock_rokae:

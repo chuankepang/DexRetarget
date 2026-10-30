@@ -12,7 +12,7 @@ from test_teleop_session import make_session, FakeCollector
 
 
 def test_loss_requires_continuously_fresh_input_and_does_not_replay():
-    policy = TrackingHold()
+    policy = TrackingHold(resume_delay=.20)  # Explicit legacy/custom window.
     assert policy.update(False, 0) == 'hold'
     assert policy.update(False, 5) is None
     assert policy.update(True, 5.01) is None
@@ -21,6 +21,49 @@ def test_loss_requires_continuously_fresh_input_and_does_not_replay():
     assert policy.update(True, 6.21) == 'resume'
     assert not policy.held
     assert policy.update(True, 7) is None
+
+
+def test_default_ten_ms_window_is_nonblocking_and_resets_on_new_loss():
+    policy = TrackingHold()
+    assert policy.resume_delay == .01
+    assert policy.update(False, 0) == 'hold'
+    assert policy.update(True, 1) is None
+    assert policy.update(True, 1.009) is None
+    assert policy.update(False, 1.0095) is None
+    assert policy.update(True, 2) is None
+    assert policy.update(True, 2.009) is None
+    assert policy.update(True, 2.011) == 'resume'
+
+
+def test_zero_window_resumes_on_first_fresh_observation():
+    policy = TrackingHold(resume_delay=0)
+    assert policy.update(False, 0) == 'hold'
+    assert policy.update(True, 1) == 'resume'
+
+
+@pytest.mark.parametrize('delay', [-.01, float('nan'), float('inf')])
+def test_invalid_recovery_delay_rejected(delay):
+    with pytest.raises(ValueError, match='tracking_resume_delay_s'):
+        TrackingHold(delay)
+
+
+def test_custom_delay_survives_manual_pause_reset():
+    from dexretarget.app.tracking import TrackingRecovery
+    session, _ = make_session()
+    recovery = TrackingRecovery(session, resume_delay=.03)
+    recovery.update(True, 0, hold=lambda: None, resume=lambda: None)
+    assert recovery.policy.resume_delay == .03
+    session.following(True)
+    transitions = []
+    def step(fresh, now):
+        recovery.update(fresh, now, hold=lambda: transitions.append('hold'),
+                        resume=lambda: transitions.append('resume'))
+    step(False, 1)
+    step(True, 2)
+    step(True, 2.011)
+    assert session.tracking_held
+    step(True, 2.031)
+    assert transitions == ['hold', 'resume']
 
 
 @pytest.mark.parametrize('timestamp', [None, float('nan'), float('inf'), 10.01, 9.0])

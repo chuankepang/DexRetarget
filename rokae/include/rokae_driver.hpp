@@ -55,6 +55,7 @@ struct RealtimeConfig {
   // Stiffness units are N/m and Nm/rad. xCoreSDK 0.3.4 does not expose a
   // separate Cartesian damping argument. These defaults are conservative
   // placeholders below the documented ER Pro maxima, not a factory recipe.
+  std::string impedance_force_frame{"world"};  // Legacy default; YAML selects tool/world explicitly.
   std::array<double, 6> cartesian_stiffness{{300.0, 300.0, 300.0, 15.0, 15.0, 15.0}};
   std::array<double, 6> cartesian_desired_wrench{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
   double max_equilibrium_translation_error{0.04};

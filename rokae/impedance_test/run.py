@@ -13,10 +13,14 @@ import sys
 import tempfile
 import time
 
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / 'rokae/build/impedance_test'
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from dexretarget.config import load_yaml_mapping
+from rokae.control.controllers import resolve_controller
+
 
 
 def vector(value, size, name):
@@ -31,8 +35,8 @@ def vector(value, size, name):
 def plan(args):
     robot_path = args.robot_config.resolve()
     task_path = args.task_config.resolve()
-    robot_config = yaml.safe_load(robot_path.read_text())
-    task_config = yaml.safe_load(task_path.read_text())
+    robot_config = load_yaml_mapping(robot_path)
+    task_config = load_yaml_mapping(task_path)
     robot = robot_config['robot']
     if robot['type'] != 'xmate-er-pro-7':
         raise ValueError('This isolated test supports the current xMatePro3 seven-axis assembly only')
@@ -61,7 +65,10 @@ def plan(args):
     if any(abs(x) > .3 for x in cog):
         raise ValueError('payload.cog_m: metres within 0.3 m per axis required')
     home = vector(task_config['home']['arm_joints'], 7, 'home.arm_joints')
-    stiffness = vector(robot_config['control']['impedance']['stiffness'], 6, 'stiffness')
+    spec = resolve_controller(robot_config, cli='impedance')
+    if any(spec.desired_wrench):
+        raise ValueError('Fixed no-contact test requires desired_wrench=0; nonzero force is not silently ignored')
+    stiffness = spec.stiffness.tolist()
     configured_stiffness = stiffness.copy()
     if args.profile == 'robotassist':
         # 用户成功 RL 截图：只匹配六轴刚度及世界方向，不冒充完整 tool1/FcInit 复现。
@@ -99,7 +106,7 @@ def plan(args):
                         'legacy RT MoveJ home -> stationary 0.5 s -> RT setup'),
         'home_settle_position_rad': .002, 'home_settle_speed_rad_s': .01,
         'control_point': 'existing flange-centre TCP; nonzero TCP refused',
-        'force_frame': 'world' if args.profile in ('robotassist', 'spring-check') else 'tool',
+        'force_frame': 'world' if args.profile in ('robotassist', 'spring-check') else spec.force_frame,
         'inertia': 'preserve current controller value; zero remains unverified',
         'guard': {'startup_s': 2, 'startup_joint_delta_rad': .04,
                   'joint_delta_rad': 1.0 if args.interaction == 'light-push' else .50,

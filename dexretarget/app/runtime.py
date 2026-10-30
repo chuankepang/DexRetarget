@@ -57,11 +57,48 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
 
     profile = getattr(args, "task_profile", None)
     home_config = profile.get("home") if profile else None
+    if home_config and not enable_arm:
+        raise ValueError("Task home requires the arm output")
+    if home_config and args.rokae_robot_type not in {None, "xmate-er-pro-7"}:
+        raise ValueError("Task home profiles currently require the seven-axis xmate-er-pro-7")
+    if args.capture and (not enable_hand or not enable_arm):
+        raise ValueError("Dataset capture requires both arm and hand outputs")
+    usb_serial = None
+    use_relay = args.quest3_source == 'relay'
+    if args.quest3_source == 'auto' and args.quest3_usb:
+        from dexretarget.teleop.devices.quest_relay import default_socket_path
+        use_relay = (args.quest3_relay_socket or default_socket_path()).exists()
+    if use_relay:
+        from dexretarget.teleop.devices.quest_relay import QuestRelayInput
+        try:
+            input_device = QuestRelayInput(args.quest3_relay_socket)
+        except OSError as exc:
+            config_option = f' --config {args.config}' if getattr(args, 'config', None) else ''
+            raise RuntimeError('Quest 通信服务不可用；先在另一终端运行 '
+                               f'python -m dexretarget.quest{config_option}') from exc
+        print(f'Quest 输入：读取独立通信服务 {input_device.path}（退出遥操作不关闭 USB）。', flush=True)
+    elif args.quest3_usb:
+        from .quest_usb import prepare_usb
+        usb_serial = prepare_usb(args.quest3_port)
+        input_device = Quest3(host=getattr(args, 'quest3_host', '0.0.0.0'),
+                              port=args.quest3_port, protocol=args.quest3_protocol)
+    else:
+        input_device = Quest3(host=getattr(args, 'quest3_host', '0.0.0.0'),
+                              port=args.quest3_port, protocol=args.quest3_protocol)
+    resources["Quest"] = input_device.stop
+    args.quest3_effective_source = 'relay' if use_relay else 'direct'
+    if use_relay or args.quest3_usb:
+        from .quest_usb import open_hts, wait_for_usb_tracking
+        # Bind/listen must succeed before HTS opens a client socket. No outputs
+        # or collection workers exist during this unlimited initial wait.
+        input_device.wait_until_ready()
+        if not use_relay:
+            print(f'Quest TCP 接收服务已就绪，端口 {args.quest3_port}。', flush=True)
+            open_hts(usb_serial)
+        wait_for_usb_tracking(input_device, args.hand, require_landmarks=enable_hand)
     collector = None
     capture_sources = None
     if args.capture:
-        if not enable_hand or not enable_arm:
-            raise ValueError("Dataset capture requires both arm and hand outputs")
         from dexretarget.dataset.recorder import Recorder
 
         collector = Recorder(args.collection_config, context={
@@ -72,12 +109,6 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
         })
         resources["dataset"] = collector.close
 
-    if home_config and not enable_arm:
-        raise ValueError("Task home requires the arm output")
-    if home_config and args.rokae_robot_type not in {None, "xmate-er-pro-7"}:
-        raise ValueError("Task home profiles currently require the seven-axis xmate-er-pro-7")
-    input_device = Quest3(port=args.quest3_port, protocol=args.quest3_protocol)
-    resources["Quest"] = input_device.stop
     hand_output: Optional[InspireSerialOutput] = None
     hand_retargeter: Optional[Retargeter] = None
     joint_names: list[str] = []
@@ -188,7 +219,7 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
 
     print("Starting Quest 3 teleoperation")
     print(f"  Outputs: hand={enable_hand}, arm={enable_arm}")
-    print(f"  Quest receiver: {args.quest3_protocol} 0.0.0.0:{args.quest3_port}")
+    print(f"  Quest receiver: {'local relay' if use_relay else args.quest3_protocol + ' 0.0.0.0:' + str(args.quest3_port)}")
     if enable_hand:
         print(
             f"  Inspire serial: {args.inspire_port} @ {args.inspire_baudrate} "
@@ -209,7 +240,8 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
     start_time = time.monotonic()
     from dexretarget.teleop.tracking import fresh_timestamp
     from .tracking import TrackingRecovery
-    recovery = TrackingRecovery(session)
+    tracking_config = config.get("teleoperation", {}) if enable_arm else {}
+    recovery = TrackingRecovery(session, resume_delay=tracking_config.get("tracking_resume_delay_s", 0.01))
     hand_command_count = 0
     previous_arm_status: Optional[str] = None
 
@@ -227,6 +259,8 @@ def _run_teleop(args: argparse.Namespace, resources) -> None:
                 "quest_to_robot_rotation": quest_to_robot_rotation.tolist(),
                 "translation_scale": mapper.translation_scale,
                 "rotation_scale": mapper.rotation_scale,
+                "rotation_mapping": mapper.rotation_mapping,
+                "wrist_to_tool_rotation": mapper.wrist_to_tool_rotation.tolist(),
                 "hand_side": args.hand,
             }
             collector.context["hand_config_text"] = config_file.read_text()

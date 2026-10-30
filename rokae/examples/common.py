@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from dexretarget.config import load_yaml_mapping
 from dexretarget.teleop.devices.rokae import RokaeXCoreDriver
 from anydexretarget.teleop import RealtimeCartesianConfig
 
@@ -42,11 +42,7 @@ def init_joint_position(config: dict[str, Any], pose: str) -> np.ndarray:
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as stream:
-        config = yaml.safe_load(stream)
-    if not isinstance(config, dict):
-        raise ValueError(f"invalid YAML mapping: {path}")
-    return config
+    return load_yaml_mapping(path)
 
 
 def add_connection_args(parser: argparse.ArgumentParser) -> None:

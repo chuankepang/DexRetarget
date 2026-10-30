@@ -34,3 +34,30 @@ def validate_camera_config(config, *, require_bound=True):
 
 def load_camera_config(path=DEFAULT_CAMERA_CONFIG, *, require_bound=True):
     return validate_camera_config(json.loads(Path(path).read_text()), require_bound=require_bound)
+
+
+def load_yaml_mapping(path):
+    """Read configuration and reject duplicate keys instead of silently overwriting."""
+    import yaml
+
+    class UniqueLoader(yaml.SafeLoader):
+        pass
+
+    def mapping(loader, node, deep=False):
+        loader.flatten_mapping(node)
+        result = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in result:
+                raise ValueError(f"{path}:{key_node.start_mark.line + 1}: duplicate YAML key {key!r}")
+            result[key] = loader.construct_object(value_node, deep=deep)
+        return result
+
+    UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    try:
+        data = yaml.load(Path(path).read_text(encoding="utf-8"), Loader=UniqueLoader)
+    except yaml.YAMLError as error:
+        raise ValueError(f"Invalid YAML configuration {path}: {error}") from error
+    if not isinstance(data, dict):
+        raise ValueError(f"Configuration must be a mapping: {path}")
+    return data

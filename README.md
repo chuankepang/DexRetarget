@@ -4,11 +4,15 @@ Quest 3 → ROKAE 七轴臂 + Inspire 灵巧手；D435i / D455 图像与臂手�
 
 ```bash
 conda activate dexteleop
-# 遥操作与采集：启动先回任务 home，e 使能、r 录制、s/f 保存
-python -m dexretarget --task-config config/tasks/cup.yaml
-# 只遥操作
-python -m dexretarget --task-config config/tasks/cup.yaml --no-capture
-# 数据检查与处理
+# 无线 UDP：同一 Wi-Fi，一个终端即可；HTS 填电脑 Wi-Fi IPv4:9000
+python -m dexretarget --config config/quest/udp.yaml --task-config config/tasks/cup.yaml --no-capture
+
+# USB TCP：终端 A 保持通信，HTS 按一次 Start Streaming
+python -m dexretarget.quest --config config/quest/usb_tcp.yaml
+# USB TCP：终端 B 遥操作，退出不关闭头显连接
+python -m dexretarget --config config/quest/usb_tcp.yaml --task-config config/tasks/cup.yaml --no-capture
+
+# 任一模式将 --no-capture 换成 --capture 即启用采集；e 使能、r 录制、s/f 保存
 python -m dexretarget.dataset --help
 ```
 
@@ -18,7 +22,7 @@ python -m dexretarget.dataset --help
 
 | 目录 | 内容 |
 | --- | --- |
-| `config/` | 唯一运行配置目录：robots、tasks、cameras、collection、retargeting、models、tools |
+| `config/` | 唯一运行配置目录：quest、robots、tasks、cameras、collection、retargeting、models、tools |
 | `dexretarget/app/` | 应用入口、键盘会话、模块组装和生命周期 |
 | `dexretarget/teleop/` | Quest 接收、重定向、臂手控制、跟踪 HOLD、home |
 | `dexretarget/camera/` | 图像采集与时间戳，独立进程 |
@@ -35,7 +39,7 @@ python -m dexretarget.dataset --help
 `config/tasks/cup.yaml` 定义，覆盖通用启动姿态。任务中的设备与 collection 引用均相对仓库根目录。
 旧 `example/` 已迁移，旧脚本路径和 `python -m data` 需要换成上面的新入口。
 
-跟踪丢失时臂手保持最后目标，保留使能意图；连续新鲜 0.20 秒后重建机械臂参考，
+跟踪丢失时臂手保持最后目标，保留使能意图；连续新鲜 0.01 秒后重建机械臂参考，
 手部用 0.5 秒过渡到最新目标。`p` 手动暂停后必须按 `e`；驱动异常或实时 safe_stop 仍停止运行。
 跟踪 HOLD 期间数据继续记录，控制状态无效，训练片段不跨过 HOLD 拼接。
 手保持最后目标不代表断电或机械锁定，仍可能完成此前已接受的运动。

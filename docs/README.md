@@ -3,6 +3,8 @@
 | 文档 | 内容 |
 | --- | --- |
 | [使用指南](usage.md) | 遥操作、键盘门控、录制、home 与退出 |
+| [工具姿态映射审查](rokae_orientation_mapping.md) | 工具 Z 90°、相对旋转、微分 IK 与离线检查 |
+| [阻抗遥操作调参](rokae_impedance_configuration.md) | 平衡点语义、参数归属、生效预览、真机验证顺序 |
 | [配置管理](configuration.md) | 配置职责、覆盖优先级、路径及环境 |
 | [逆解与配置逐项审查](ik_config_audit.md) | 当前逆解、零空间、离线质量、117 项参数归属 |
 | [架构](architecture.md) | 模块边界、依赖方向、控制/数据流、生命周期 |

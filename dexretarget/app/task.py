@@ -7,12 +7,11 @@ import json
 from pathlib import Path
 
 import numpy as np
-import yaml
 
-from dexretarget.config import PROJECT_ROOT as ROOT, project_path as _project_path
+from dexretarget.config import PROJECT_ROOT as ROOT, project_path as _project_path, load_yaml_mapping
 TELEOP_KEYS = {
     'arm_config', 'arm_control', 'hand', 'optimizer', 'hand_config',
-    'quest3_port', 'quest3_protocol', 'inspire_port', 'inspire_baudrate',
+    'quest_config', 'quest3_port', 'quest3_protocol', 'quest3_usb', 'inspire_port', 'inspire_baudrate',
     'inspire_hand_id', 'rokae_robot_ip', 'rokae_local_ip', 'arm_print_hz',
 }
 
@@ -30,7 +29,7 @@ def _vector(value, size, name):
 
 def load_task(path):
     path = Path(path).resolve()
-    profile = yaml.safe_load(path.read_text())
+    profile = load_yaml_mapping(path)
     if not isinstance(profile, dict) or profile.get('schema_version') != 'dexretarget.task.v1':
         raise ValueError('Expected task schema dexretarget.task.v1')
     allowed = {'schema_version', 'task_id', 'instruction', 'teleop', 'collection', 'home', 'scene_setup'}
@@ -48,6 +47,8 @@ def load_task(path):
     for key, values in choices.items():
         if key in teleop and teleop[key] not in values:
             raise ValueError(f'Invalid task teleop.{key}')
+    if 'quest3_usb' in teleop and type(teleop['quest3_usb']) is not bool:
+        raise ValueError('teleop.quest3_usb must be boolean')
     for key, lower, upper in [('quest3_port', 1, 65535), ('inspire_baudrate', 1, 4000000), ('inspire_hand_id', 1, 253)]:
         if key in teleop and (type(teleop[key]) is not int or not lower <= teleop[key] <= upper):
             raise ValueError(f'Invalid task teleop.{key}')
@@ -55,7 +56,9 @@ def load_task(path):
         rate = teleop['arm_print_hz']
         if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not np.isfinite(rate) or rate < 0:
             raise ValueError('teleop.arm_print_hz must be finite and nonnegative')
-    for key in ['arm_config', 'hand_config']:
+    if 'quest_config' in teleop and {'quest3_port', 'quest3_protocol', 'quest3_usb'} & teleop.keys():
+        raise ValueError('Use teleop.quest_config or legacy Quest transport keys, not both')
+    for key in ['arm_config', 'hand_config', 'quest_config']:
         if key in teleop and not project_path(teleop[key]).is_file():
             raise FileNotFoundError(teleop[key])
     for key in ['inspire_port', 'rokae_robot_ip', 'rokae_local_ip']:
@@ -96,6 +99,11 @@ def apply_task(args, explicit=()):
     profile = load_task(args.task_config) if args.task_config else None
     if profile:
         for key, value in profile['teleop'].items():
+            if key == 'quest_config':
+                from dexretarget.quest_config import LEGACY_MODE_FLAGS
+                if 'config' not in explicit and not LEGACY_MODE_FLAGS.intersection(explicit):
+                    args.config = project_path(value)
+                continue
             if key not in explicit:
                 if key in {'arm_config', 'hand_config'} and value is not None:
                     value = str(project_path(value))
@@ -110,4 +118,10 @@ def apply_task(args, explicit=()):
         args.collection_config = ROOT / 'config/collection/collection.json'
     args.capture = bool(args.capture)
     args.task_profile = copy.deepcopy(profile)
+    if getattr(args, 'config', None) is not None:
+        from dexretarget.quest_config import apply_quest_config
+        apply_quest_config(args, explicit)
+    else:
+        from .quest_usb import resolve_usb_transport
+        resolve_usb_transport(args, explicit)
     return profile

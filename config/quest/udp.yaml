@@ -1,0 +1,8 @@
+# Wi-Fi UDP：电脑和 Quest 连接同一可互通局域网。
+# HTS 选 UDP，目标填电脑 Wi-Fi IPv4（不是 0.0.0.0），端口 9000。
+# 遥操作程序直接接收；只需一个终端，无需通信服务或 ADB。
+schema_version: dexretarget.quest.v1
+mode: udp
+# 接收端绑定地址；监听全部本机网卡，不是头显发送目标。
+bind_host: 0.0.0.0
+port: 9000
